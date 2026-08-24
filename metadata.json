@@ -1,0 +1,6 @@
+{
+  "name": "Leitor NFC-e SP & Classificador",
+  "description": "Leitor de QR Code de NFC-e da Sefaz SP com extração de itens, classificador de produtos e exportação para Google Sheets.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

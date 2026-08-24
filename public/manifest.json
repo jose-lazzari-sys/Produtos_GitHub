@@ -1,0 +1,17 @@
+{
+  "name": "PRODUTOS COMPRADOS",
+  "short_name": "NFC-e SP",
+  "description": "Leitor de QR Code de NFC-e da Sefaz SP com extração de itens e classificador para Google Sheets",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#064e3b",
+  "theme_color": "#059669",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

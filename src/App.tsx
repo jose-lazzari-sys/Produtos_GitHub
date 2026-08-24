@@ -186,6 +186,12 @@ export default function App() {
     setReceipts(result.receipts);
   };
 
+  // Restore dataset from Backup JSON file
+  const handleRestoreBackup = (restoredItems: NFCeItem[], restoredReceipts: NFCeReceipt[]) => {
+    setItems(restoredItems);
+    setReceipts(restoredReceipts);
+  };
+
   const handleOpenXmlModal = (url?: string, initialError?: string) => {
     setXmlModalUrl(url);
     setXmlModalError(initialError);
@@ -331,6 +337,7 @@ export default function App() {
             onLoadSample={handleLoadSample}
             onEditClick={(item) => setEditingItem(item)}
             onSwitchToScanner={() => setActiveTab('scanner')}
+            onRestoreBackup={handleRestoreBackup}
           />
         )}
       </main>

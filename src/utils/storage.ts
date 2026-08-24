@@ -457,3 +457,96 @@ export function generateSampleData(): { receipt: NFCeReceipt; items: NFCeItem[] 
 
   return { receipt, items };
 }
+
+export interface BackupData {
+  version: number;
+  exportedAt: string;
+  app: string;
+  itemsCount: number;
+  receiptsCount: number;
+  items: NFCeItem[];
+  receipts: NFCeReceipt[];
+}
+
+export function exportBackupData(): BackupData {
+  const items = getStoredItems();
+  const receipts = getStoredReceipts();
+
+  return {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    app: 'NFC-e Sefaz SP & Classificador de Produtos',
+    itemsCount: items.length,
+    receiptsCount: receipts.length,
+    items,
+    receipts
+  };
+}
+
+export function downloadBackupJSON(): void {
+  try {
+    const backup = exportBackupData();
+    const jsonStr = JSON.stringify(backup, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `backup_nfce_produtos_${dateStr}_${backup.itemsCount}_itens.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    console.error('Erro ao exportar backup:', err);
+    throw err;
+  }
+}
+
+export function importBackupData(rawContent: string): { success: boolean; items: NFCeItem[]; receipts: NFCeReceipt[]; error?: string } {
+  try {
+    const parsed = JSON.parse(rawContent);
+
+    // Support both format: direct { items, receipts } or wrapped in BackupData
+    let itemsToImport: NFCeItem[] = [];
+    let receiptsToImport: NFCeReceipt[] = [];
+
+    if (Array.isArray(parsed)) {
+      itemsToImport = parsed;
+    } else if (parsed && typeof parsed === 'object') {
+      if (Array.isArray(parsed.items)) {
+        itemsToImport = parsed.items;
+      }
+      if (Array.isArray(parsed.receipts)) {
+        receiptsToImport = parsed.receipts;
+      }
+    }
+
+    if (itemsToImport.length === 0 && receiptsToImport.length === 0) {
+      return { success: false, items: [], receipts: [], error: 'O arquivo selecionado não contém itens ou recibos válidos.' };
+    }
+
+    // Save items and receipts
+    saveStoredItems(itemsToImport);
+    if (receiptsToImport.length > 0) {
+      saveStoredReceipts(receiptsToImport);
+    }
+
+    const reloadedItems = getStoredItems();
+    const reloadedReceipts = getStoredReceipts();
+
+    return {
+      success: true,
+      items: reloadedItems,
+      receipts: reloadedReceipts
+    };
+  } catch (err: any) {
+    console.error('Erro ao importar backup:', err);
+    return {
+      success: false,
+      items: [],
+      receipts: [],
+      error: err?.message || 'Arquivo JSON inválido ou corrompido.'
+    };
+  }
+}

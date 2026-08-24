@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Table,
   Filter,
@@ -20,9 +20,13 @@ import {
   Building2,
   Scale,
   X,
-  PlusCircle
+  PlusCircle,
+  Database,
+  Upload,
+  FileDown,
+  FileUp
 } from 'lucide-react';
-import { NFCeItem } from '../types';
+import { NFCeItem, NFCeReceipt } from '../types';
 import { formatBRL } from '../utils/nfceParser';
 import { extractPesoKg, calculatePrecoPorKg } from '../utils/weightUtils';
 import {
@@ -33,6 +37,7 @@ import {
   GOOGLE_SHEETS_HEADERS
 } from '../utils/exporter';
 import { TIPO_OPTIONS, CATEGORY_RULES } from '../utils/classifier';
+import { downloadBackupJSON, importBackupData } from '../utils/storage';
 
 interface ReportTableProps {
   items: NFCeItem[];
@@ -44,6 +49,7 @@ interface ReportTableProps {
   onLoadSample: () => void;
   onEditClick: (item: NFCeItem) => void;
   onSwitchToScanner: () => void;
+  onRestoreBackup?: (items: NFCeItem[], receipts: NFCeReceipt[]) => void;
 }
 
 export const ReportTable: React.FC<ReportTableProps> = ({
@@ -56,11 +62,14 @@ export const ReportTable: React.FC<ReportTableProps> = ({
   onLoadSample,
   onEditClick,
   onSwitchToScanner,
+  onRestoreBackup,
 }) => {
   const [selectedTipo, setSelectedTipo] = useState<string>('Todos');
   const [selectedProduto, setSelectedProduto] = useState<string>('Todos');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [copiedSuccess, setCopiedSuccess] = useState(false);
+  const [backupNotice, setBackupNotice] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [sortField, setSortField] = useState<'num' | 'valorTotal' | 'data' | 'descricao' | 'precoPorKg'>('num');
   const [sortAsc, setSortAsc] = useState(true);
 
@@ -239,6 +248,64 @@ export const ReportTable: React.FC<ReportTableProps> = ({
     downloadFile(csv, filename, 'text/csv;charset=utf-8;');
   };
 
+  // Export JSON Backup
+  const handleExportBackup = () => {
+    try {
+      downloadBackupJSON();
+      setBackupNotice({
+        type: 'success',
+        text: `Arquivo de Backup (.json) gerado com sucesso contendo ${items.length} itens salvos!`
+      });
+      setTimeout(() => setBackupNotice(null), 6000);
+    } catch (err: any) {
+      setBackupNotice({
+        type: 'error',
+        text: 'Erro ao gerar arquivo de backup: ' + (err?.message || '')
+      });
+      setTimeout(() => setBackupNotice(null), 6000);
+    }
+  };
+
+  // Import JSON Backup
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      if (!content) return;
+
+      const result = importBackupData(content);
+      if (result.success) {
+        if (onRestoreBackup) {
+          onRestoreBackup(result.items, result.receipts);
+        }
+        setBackupNotice({
+          type: 'success',
+          text: `Backup restaurado com sucesso! ${result.items.length} itens e ${result.receipts.length} recibos carregados no aplicativo.`
+        });
+        setTimeout(() => setBackupNotice(null), 7000);
+      } else {
+        setBackupNotice({
+          type: 'error',
+          text: result.error || 'Erro ao processar o arquivo de backup.'
+        });
+        setTimeout(() => setBackupNotice(null), 7000);
+      }
+    };
+    reader.onerror = () => {
+      setBackupNotice({
+        type: 'error',
+        text: 'Erro ao ler o arquivo selecionado.'
+      });
+      setTimeout(() => setBackupNotice(null), 6000);
+    };
+
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
   const handleSort = (field: 'num' | 'valorTotal' | 'data' | 'descricao' | 'precoPorKg') => {
     if (sortField === field) {
       setSortAsc(!sortAsc);
@@ -402,14 +469,14 @@ export const ReportTable: React.FC<ReportTableProps> = ({
               </p>
             </div>
 
-            {/* Google Sheets Export Actions (Large touch buttons) */}
+            {/* Google Sheets Export Actions & Backup Buttons (Large touch buttons) */}
             <div className="flex flex-wrap items-center gap-2.5">
               <button
                 id="copy-to-sheets-btn"
                 type="button"
                 onClick={handleCopyToSheets}
                 disabled={filteredItems.length === 0}
-                className="py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:opacity-50 text-white text-xs sm:text-sm font-bold shadow-md hover:shadow-lg transition-all flex items-center gap-2 min-h-[44px]"
+                className="py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:opacity-50 text-white text-xs sm:text-sm font-bold shadow-md hover:shadow-lg transition-all flex items-center gap-2 min-h-[44px] cursor-pointer"
               >
                 {copiedSuccess ? (
                   <>
@@ -429,12 +496,47 @@ export const ReportTable: React.FC<ReportTableProps> = ({
                 type="button"
                 onClick={handleDownloadCSV}
                 disabled={filteredItems.length === 0}
-                className="py-3 px-3.5 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs sm:text-sm font-semibold transition-colors flex items-center gap-1.5 min-h-[44px]"
+                className="py-3 px-3.5 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs sm:text-sm font-semibold transition-colors flex items-center gap-1.5 min-h-[44px] cursor-pointer"
                 title="Baixar arquivo CSV compatível com Planilhas"
               >
                 <Download className="w-4 h-4 text-slate-500" />
                 <span>Baixar CSV</span>
               </button>
+
+              {/* Backup JSON Button Group */}
+              <div className="flex items-center rounded-xl border border-indigo-200 dark:border-indigo-800/60 bg-indigo-50/50 dark:bg-indigo-950/30 p-0.5">
+                <button
+                  id="export-backup-btn"
+                  type="button"
+                  onClick={handleExportBackup}
+                  disabled={items.length === 0}
+                  className="py-2.5 px-3 rounded-lg text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 disabled:opacity-40 disabled:cursor-not-allowed text-xs font-bold transition-colors flex items-center gap-1.5 min-h-[40px] cursor-pointer"
+                  title="Fazer backup de todos os itens salvos em arquivo JSON"
+                >
+                  <FileDown className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                  <span>Fazer Backup (JSON)</span>
+                </button>
+
+                <button
+                  id="import-backup-btn"
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="py-2.5 px-3 rounded-lg text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-xs font-bold transition-colors flex items-center gap-1.5 min-h-[40px] cursor-pointer"
+                  title="Restaurar backup de itens a partir de um arquivo JSON"
+                >
+                  <FileUp className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                  <span>Restaurar Backup</span>
+                </button>
+
+                {/* Hidden File Input */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".json,application/json"
+                  onChange={handleFileChange}
+                  className="hidden"
+                />
+              </div>
 
               <a
                 id="open-sheets-link"
@@ -448,6 +550,33 @@ export const ReportTable: React.FC<ReportTableProps> = ({
               </a>
             </div>
           </div>
+
+          {/* Backup Notice Alert Banner */}
+          {backupNotice && (
+            <div
+              className={`p-3.5 rounded-xl text-xs sm:text-sm font-medium flex items-center justify-between gap-3 shadow-xs animate-in fade-in duration-200 ${
+                backupNotice.type === 'success'
+                  ? 'bg-emerald-100 dark:bg-emerald-950/80 border border-emerald-300 dark:border-emerald-700 text-emerald-900 dark:text-emerald-200'
+                  : 'bg-red-100 dark:bg-red-950/80 border border-red-300 dark:border-red-700 text-red-900 dark:text-red-200'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                {backupNotice.type === 'success' ? (
+                  <Check className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0" />
+                )}
+                <span>{backupNotice.text}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBackupNotice(null)}
+                className="p-1 hover:bg-black/10 dark:hover:bg-white/10 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
 
           {/* Filter Tabs by Tipo (Large mobile-friendly tab pills) */}
           <div className="space-y-2">

@@ -43,20 +43,23 @@ export const QRScanner: React.FC<QRScannerProps> = ({
 
   // Initialize camera list on mount
   useEffect(() => {
-    Html5Qrcode.getCameras()
-      .then((devices) => {
+    async function initCameraDevices() {
+      try {
+        const devices = await Html5Qrcode.getCameras();
         if (devices && devices.length > 0) {
           setCameras(devices);
           // Prefer back/rear camera
           const backCam = devices.find(
-            (d) => /back|rear|traseira|ambiente/i.test(d.label) || /environment/i.test(d.label)
+            (d) => /back|rear|traseira|ambiente|environment/i.test(d.label)
           );
           setSelectedCameraId(backCam ? backCam.id : devices[0].id);
         }
-      })
-      .catch((err) => {
+      } catch (err) {
         console.warn('Camera device listing notice:', err);
-      });
+      }
+    }
+
+    initCameraDevices();
 
     return () => {
       stopCamera();
@@ -80,22 +83,57 @@ export const QRScanner: React.FC<QRScannerProps> = ({
 
       const config = {
         fps: 15,
-        qrbox: { width: 250, height: 250 },
+        qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
+          const minDim = Math.min(viewfinderWidth, viewfinderHeight);
+          const boxSize = Math.max(220, Math.floor(minDim * 0.72));
+          return { width: boxSize, height: boxSize };
+        },
         aspectRatio: 1.0,
       };
 
-      const cameraParam = camId ? { deviceId: { exact: camId } } : { facingMode: 'environment' };
-
-      await html5QrCode.start(
-        cameraParam,
-        config,
-        (decodedText) => {
-          handleQRCodeScanned(decodedText);
-        },
-        () => {
-          // Ignored per frame scanning error
+      // Strategy 1: Try with exact deviceId or facingMode
+      try {
+        const cameraParam = camId ? { deviceId: { exact: camId } } : { facingMode: 'environment' };
+        await html5QrCode.start(
+          cameraParam,
+          config,
+          (decodedText) => {
+            handleQRCodeScanned(decodedText);
+          },
+          () => {
+            // Frame scan cycle
+          }
+        );
+      } catch (firstErr) {
+        console.warn('Initial camera start attempt failed, trying fallback to facingMode: environment...', firstErr);
+        // Strategy 2: Fallback directly to { facingMode: "environment" } or { facingMode: "user" }
+        try {
+          await html5QrCode.start(
+            { facingMode: 'environment' },
+            config,
+            (decodedText) => {
+              handleQRCodeScanned(decodedText);
+            },
+            () => {}
+          );
+        } catch (secondErr) {
+          console.warn('Second attempt failed, trying fallback to basic video stream constraints...', secondErr);
+          // Strategy 3: Basic start with any available camera
+          const devices = await Html5Qrcode.getCameras();
+          if (devices && devices.length > 0) {
+            await html5QrCode.start(
+              devices[0].id,
+              config,
+              (decodedText) => {
+                handleQRCodeScanned(decodedText);
+              },
+              () => {}
+            );
+          } else {
+            throw secondErr;
+          }
         }
-      );
+      }
 
       setIsScanning(true);
 
@@ -110,9 +148,20 @@ export const QRScanner: React.FC<QRScannerProps> = ({
       }
     } catch (err: any) {
       console.error('Failed to start camera scanner:', err);
-      setCameraError(
-        'Não foi possível acessar a câmera. Verifique se concedeu permissão de câmera no navegador ou use o upload de imagem / link manual.'
-      );
+      const isSecure = window.isSecureContext || window.location.protocol === 'https:' || window.location.hostname === 'localhost';
+      if (!isSecure) {
+        setCameraError(
+          'O navegador do celular bloqueia a câmera em conexões HTTP sem SSL (a câmera só funciona em HTTPS ou localhost). Utilize o link da nuvem com HTTPS ou faça upload da foto do QR Code.'
+        );
+      } else if (err?.name === 'NotAllowedError' || err?.message?.includes('Permission')) {
+        setCameraError(
+          'Permissão da câmera foi negada. Toque no ícone de cadeado/permissões ao lado da barra de endereço no celular e permita o acesso à Câmera.'
+        );
+      } else {
+        setCameraError(
+          'Não foi possível inicializar a câmera do celular. Verifique a permissão ou use o botão "Carregar Foto / Imagem" abaixo.'
+        );
+      }
       setIsScanning(false);
     }
   };

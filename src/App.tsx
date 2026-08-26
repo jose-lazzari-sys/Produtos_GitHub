@@ -8,7 +8,8 @@ import {
   ShieldCheck,
   CheckCircle,
   Sparkles,
-  Info
+  Info,
+  Cloud
 } from 'lucide-react';
 import { NFCeItem, NFCeReceipt } from './types';
 import {
@@ -21,21 +22,38 @@ import {
   deleteStoredItem,
   clearAllStorage,
   generateSampleData,
-  saveStoredItems
+  saveStoredItems,
+  saveStoredReceipts
 } from './utils/storage';
+import { 
+  loginWithGoogle, 
+  logoutUser, 
+  syncDataToCloud, 
+  loadDataFromCloud,
+  subscribeToCloudData 
+} from './utils/cloudSync';
+import { auth, onAuthStateChanged, User } from './lib/firebase';
 import { QRScanner } from './components/QRScanner';
 import { ReceiptSummaryCard } from './components/ReceiptSummaryCard';
 import { ReportTable } from './components/ReportTable';
+import { AppActionsTab } from './components/AppActionsTab';
 import { XmlPasteModal } from './components/XmlPasteModal';
 import { EditItemModal } from './components/EditItemModal';
+import { CloudSyncHeader } from './components/CloudSyncHeader';
 
 export default function App() {
-  // Navigation: 'scanner' (Screen 1) | 'report' (Screen 2)
-  const [activeTab, setActiveTab] = useState<'scanner' | 'report'>('scanner');
+  // Navigation: 'scanner' (Screen 1) | 'report' (Screen 2) | 'actions' (Screen 3)
+  const [activeTab, setActiveTab] = useState<'scanner' | 'report' | 'actions'>('scanner');
 
   // Persistence State
   const [items, setItems] = useState<NFCeItem[]>([]);
   const [receipts, setReceipts] = useState<NFCeReceipt[]>([]);
+
+  // Cloud Sync State
+  const [user, setUser] = useState<User | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  const [cloudBannerDismissed, setCloudBannerDismissed] = useState(false);
 
   // Currently scanned receipt awaiting confirmation
   const [pendingReceipt, setPendingReceipt] = useState<NFCeReceipt | null>(null);
@@ -63,6 +81,143 @@ export default function App() {
     }
   }, []);
 
+  // Listen to Firebase Auth state
+  useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      if (currentUser) {
+        setIsSyncing(true);
+
+        // If this device has local items, ensure they are uploaded to the cloud immediately
+        const initialLocalItems = getStoredItems();
+        const initialLocalReceipts = getStoredReceipts();
+        if (initialLocalItems.length > 0) {
+          syncDataToCloud(currentUser.uid, initialLocalItems, initialLocalReceipts, currentUser.email)
+            .then(() => setLastSyncedAt(new Date()))
+            .catch(console.error);
+        }
+
+        // Subscribe to real-time updates from Firestore
+        const unsubscribeSnapshot = subscribeToCloudData(
+          currentUser.uid,
+          (cloudItems, cloudReceipts) => {
+            if (cloudItems && cloudItems.length > 0) {
+              setItems(cloudItems);
+            }
+            if (cloudReceipts && cloudReceipts.length > 0) {
+              setReceipts(cloudReceipts);
+            }
+            setIsSyncing(false);
+            setLastSyncedAt(new Date());
+          },
+          (err) => {
+            console.error('Snapshot error:', err);
+            setIsSyncing(false);
+          }
+        );
+
+        return () => {
+          unsubscribeSnapshot();
+        };
+      } else {
+        setIsSyncing(false);
+      }
+    });
+
+    return () => {
+      unsubscribeAuth();
+    };
+  }, []);
+
+  // Helper to sync to Cloud whenever state changes if user is logged in
+  const syncChangesToCloud = async (newItems: NFCeItem[], newReceipts: NFCeReceipt[]) => {
+    if (!user) return;
+    try {
+      setIsSyncing(true);
+      await syncDataToCloud(user.uid, newItems, newReceipts, user.email);
+      setLastSyncedAt(new Date());
+    } catch (e) {
+      console.error('Falha ao sincronizar com nuvem:', e);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // Login handler
+  const handleLogin = async () => {
+    try {
+      setIsSyncing(true);
+      const loggedUser = await loginWithGoogle();
+      setUser(loggedUser);
+      // If local storage has items, sync them to cloud
+      const currentItems = getStoredItems();
+      const currentReceipts = getStoredReceipts();
+      if (currentItems.length > 0) {
+        await syncDataToCloud(loggedUser.uid, currentItems, currentReceipts, loggedUser.email);
+      }
+      setLastSyncedAt(new Date());
+    } catch (err) {
+      console.error('Login error:', err);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // Logout handler
+  const handleLogout = async () => {
+    await logoutUser();
+    setUser(null);
+  };
+
+  // Force upload current local items to Firestore
+  const handleForceUpload = async () => {
+    if (!user) {
+      await handleLogin();
+      return;
+    }
+    const currentItems = getStoredItems();
+    const currentReceipts = getStoredReceipts();
+    await syncChangesToCloud(currentItems, currentReceipts);
+  };
+
+  // Force download cloud items to current device
+  const handleForceDownload = async () => {
+    if (!user) {
+      await handleLogin();
+      return;
+    }
+    setIsSyncing(true);
+    try {
+      const cloudData = await loadDataFromCloud(user.uid);
+      if (cloudData) {
+        if (cloudData.items.length > 0) {
+          saveStoredItems(cloudData.items);
+          setItems(cloudData.items);
+        }
+        if (cloudData.receipts.length > 0) {
+          saveStoredReceipts(cloudData.receipts);
+          setReceipts(cloudData.receipts);
+        }
+        setLastSyncedAt(new Date());
+      }
+    } catch (e) {
+      console.error('Erro ao baixar dados da nuvem:', e);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // Manual sync button
+  const handleManualSync = async () => {
+    if (!user) {
+      handleLogin();
+      return;
+    }
+    const currentItems = getStoredItems();
+    const currentReceipts = getStoredReceipts();
+    await syncChangesToCloud(currentItems, currentReceipts);
+  };
+
   // Sync dark mode class on <html>
   useEffect(() => {
     if (isDark) {
@@ -78,11 +233,12 @@ export default function App() {
     setActiveTab('scanner'); // Stay on scanner to review receipt card
   };
 
-  // Save parsed receipt into LocalStorage
+  // Save parsed receipt into LocalStorage & Cloud
   const handleSavePendingReceipt = (receipt: NFCeReceipt) => {
     const result = addReceiptAndItems(receipt);
     setItems(result.items);
     setReceipts(result.receipts);
+    syncChangesToCloud(result.items, result.receipts);
   };
 
   // Discard pending receipt
@@ -94,6 +250,7 @@ export default function App() {
   const handleUpdateItem = (updated: NFCeItem) => {
     const updatedList = updateStoredItem(updated);
     setItems([...updatedList]);
+    syncChangesToCloud(updatedList, receipts);
   };
 
   // Open manual item creation modal
@@ -104,25 +261,23 @@ export default function App() {
   // Save new manually created item
   const handleSaveManualItem = (newItem: NFCeItem) => {
     const updatedList = addStoredItem(newItem);
+    const updatedReceipts = getStoredReceipts();
     setItems([...updatedList]);
-    setReceipts(getStoredReceipts());
+    setReceipts(updatedReceipts);
     setIsCreatingManualItem(false);
+    syncChangesToCloud(updatedList, updatedReceipts);
   };
 
   // Delete single item
   const handleDeleteItem = (itemId: string, itemObj?: NFCeItem) => {
-    // 1. Direct functional update on items state to guarantee immediate UI reaction
     setItems((prevItems) => {
       const targetDesc = (itemObj?.descricao || '').trim().toLowerCase();
       const targetVal = Number(itemObj?.valorTotal || 0);
       const targetNum = itemObj?.num != null ? String(itemObj.num).trim() : null;
 
       let indexToDelete = prevItems.findIndex((it, idx) => {
-        // 1. Match by ID
         if (itemId && it.id && it.id === itemId) return true;
         if (itemObj?.id && it.id && it.id === itemObj.id) return true;
-
-        // 2. Match by properties
         if (itemObj) {
           const sameDesc = (it.descricao || '').trim().toLowerCase() === targetDesc;
           const sameNum = targetNum ? String(it.num ?? idx + 1).trim() === targetNum : false;
@@ -132,12 +287,10 @@ export default function App() {
         return false;
       });
 
-      // Fallback by description
       if (indexToDelete === -1 && targetDesc) {
         indexToDelete = prevItems.findIndex(it => (it.descricao || '').trim().toLowerCase() === targetDesc);
       }
 
-      // Fallback by itemId
       if (indexToDelete === -1 && itemId) {
         indexToDelete = prevItems.findIndex(it => it.id === itemId);
       }
@@ -147,20 +300,18 @@ export default function App() {
         nextList.splice(indexToDelete, 1);
       }
 
-      // Renumber 1, 2, 3...
       const renumbered = nextList.map((item, idx) => ({
         ...item,
         num: idx + 1
       }));
 
-      // Immediately save to LocalStorage
       saveStoredItems(renumbered);
+      deleteStoredItem(itemObj || itemId);
+      const currentReceipts = getStoredReceipts();
+      setReceipts(currentReceipts);
+      syncChangesToCloud(renumbered, currentReceipts);
       return renumbered;
     });
-
-    // 2. Also keep receipts in sync in LocalStorage
-    deleteStoredItem(itemObj || itemId);
-    setReceipts(getStoredReceipts());
   };
 
   // Update all store names across stored items
@@ -168,6 +319,7 @@ export default function App() {
     const result = updateAllStoreNames(newName);
     setItems(result.items);
     setReceipts(result.receipts);
+    syncChangesToCloud(result.items, result.receipts);
   };
 
   // Clear all items and receipts
@@ -176,6 +328,7 @@ export default function App() {
     setItems([]);
     setReceipts([]);
     setPendingReceipt(null);
+    syncChangesToCloud([], []);
   };
 
   // Load sample dataset
@@ -184,12 +337,14 @@ export default function App() {
     const result = addReceiptAndItems(sample.receipt);
     setItems(result.items);
     setReceipts(result.receipts);
+    syncChangesToCloud(result.items, result.receipts);
   };
 
   // Restore dataset from Backup JSON file
   const handleRestoreBackup = (restoredItems: NFCeItem[], restoredReceipts: NFCeReceipt[]) => {
     setItems(restoredItems);
     setReceipts(restoredReceipts);
+    syncChangesToCloud(restoredItems, restoredReceipts);
   };
 
   const handleOpenXmlModal = (url?: string, initialError?: string) => {
@@ -228,7 +383,7 @@ export default function App() {
             <button
               id="desktop-tab-scanner"
               onClick={() => setActiveTab('scanner')}
-              className={`py-2 px-5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 ${
+              className={`py-2 px-4 md:px-5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 ${
                 activeTab === 'scanner'
                   ? 'bg-emerald-600 text-white shadow-sm'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
@@ -241,7 +396,7 @@ export default function App() {
             <button
               id="desktop-tab-report"
               onClick={() => setActiveTab('report')}
-              className={`py-2 px-5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 ${
+              className={`py-2 px-4 md:px-5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 ${
                 activeTab === 'report'
                   ? 'bg-emerald-600 text-white shadow-sm'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
@@ -261,10 +416,35 @@ export default function App() {
                 </span>
               )}
             </button>
+
+            <button
+              id="desktop-tab-actions"
+              onClick={() => setActiveTab('actions')}
+              className={`py-2 px-4 md:px-5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 ${
+                activeTab === 'actions'
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              <Sparkles className="w-4 h-4" />
+              <span>3. Ações do App</span>
+            </button>
           </nav>
 
-          {/* Header Right Actions */}
+          {/* Header Right Actions & Cloud Sync */}
           <div className="flex items-center gap-2">
+            <CloudSyncHeader
+              user={user}
+              isSyncing={isSyncing}
+              lastSyncedAt={lastSyncedAt}
+              itemsCount={items.length}
+              onLogin={handleLogin}
+              onLogout={handleLogout}
+              onManualSync={handleManualSync}
+              onForceUpload={handleForceUpload}
+              onForceDownload={handleForceDownload}
+            />
+
             <button
               id="header-xml-paste-btn"
               onClick={() => handleOpenXmlModal()}
@@ -286,6 +466,34 @@ export default function App() {
           </div>
         </div>
       </header>
+
+      {/* Cloud Sync Announcement Banner for Non-Logged Users */}
+      {!user && !cloudBannerDismissed && (
+        <div className="bg-gradient-to-r from-indigo-900 via-indigo-800 to-emerald-900 text-white px-4 py-2.5 shadow-md">
+          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2">
+              <Cloud className="w-4 h-4 text-emerald-300 shrink-0" />
+              <span>
+                <strong>Sincronização em Tempo Real Ativada:</strong> Conecte sua conta Google no PC e no Celular para sincronizar seus {items.length} itens instantaneamente sem arquivos!
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleLogin}
+                className="py-1 px-3 bg-white text-indigo-950 font-bold rounded-lg hover:bg-indigo-50 transition-colors shadow-xs"
+              >
+                Conectar com Google
+              </button>
+              <button
+                onClick={() => setCloudBannerDismissed(true)}
+                className="text-indigo-200 hover:text-white px-1.5 py-0.5 text-xs"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
@@ -315,10 +523,10 @@ export default function App() {
               <ShieldCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
               <div className="text-xs text-slate-600 dark:text-slate-400 space-y-1">
                 <p className="font-bold text-slate-900 dark:text-white">
-                  Regras de Classificação Automática
+                  Classificação Automática & Sincronização Segura
                 </p>
                 <p className="leading-relaxed">
-                  Os itens da sua nota fiscal são divididos automaticamente em <strong>Tipo</strong> (Alimentação, Higiene Pessoal, Limpeza Doméstica), <strong>Produto</strong> (açougue, bebidas, laticínios, padaria...) e <strong>Detalhes</strong>. Todos os dados ficam salvos localmente e podem ser copiados para o Google Sheets em 9 colunas.
+                  Os itens da sua nota fiscal são divididos automaticamente em <strong>Tipo</strong> (Alimentação, Higiene Pessoal, Limpeza Doméstica), <strong>Produto</strong> (açougue, bebidas, laticínios, padaria...) e <strong>Detalhes</strong>. Todos os dados sincronizam em tempo real na nuvem entre celular e PC.
                 </p>
               </div>
             </div>
@@ -337,30 +545,41 @@ export default function App() {
             onLoadSample={handleLoadSample}
             onEditClick={(item) => setEditingItem(item)}
             onSwitchToScanner={() => setActiveTab('scanner')}
+            onSwitchToActions={() => setActiveTab('actions')}
             onRestoreBackup={handleRestoreBackup}
+          />
+        )}
+
+        {/* Screen 3: Ações do App (Google Sheets, CSV, Backup Offline) */}
+        {activeTab === 'actions' && (
+          <AppActionsTab
+            items={items}
+            receipts={receipts}
+            onRestoreBackup={handleRestoreBackup}
+            onGoToReport={() => setActiveTab('report')}
           />
         )}
       </main>
 
       {/* Mobile Bottom Navigation Bar (Large touch targets for smartphones) */}
-      <div className="sm:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 px-4 py-2 flex items-center justify-around shadow-2xl">
+      <div className="sm:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 px-3 py-2 flex items-center justify-around shadow-2xl">
         <button
           id="mobile-nav-scanner"
           onClick={() => setActiveTab('scanner')}
-          className={`flex-1 py-2.5 px-3 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all ${
+          className={`flex-1 py-2 px-2 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all ${
             activeTab === 'scanner'
               ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 font-bold'
               : 'text-slate-500 dark:text-slate-400 font-medium'
           }`}
         >
           <QrCode className="w-5 h-5" />
-          <span className="text-xs">1. Leitor QR</span>
+          <span className="text-[11px] leading-none">1. Leitor QR</span>
         </button>
 
         <button
           id="mobile-nav-report"
           onClick={() => setActiveTab('report')}
-          className={`flex-1 py-2.5 px-3 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all relative ${
+          className={`flex-1 py-2 px-2 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all relative ${
             activeTab === 'report'
               ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 font-bold'
               : 'text-slate-500 dark:text-slate-400 font-medium'
@@ -374,7 +593,20 @@ export default function App() {
               </span>
             )}
           </div>
-          <span className="text-xs">2. Relatório ({items.length})</span>
+          <span className="text-[11px] leading-none">2. Relatório</span>
+        </button>
+
+        <button
+          id="mobile-nav-actions"
+          onClick={() => setActiveTab('actions')}
+          className={`flex-1 py-2 px-2 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all ${
+            activeTab === 'actions'
+              ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 font-bold'
+              : 'text-slate-500 dark:text-slate-400 font-medium'
+          }`}
+        >
+          <Sparkles className="w-5 h-5" />
+          <span className="text-[11px] leading-none">3. Ações</span>
         </button>
       </div>
 

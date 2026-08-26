@@ -49,6 +49,7 @@ interface ReportTableProps {
   onLoadSample: () => void;
   onEditClick: (item: NFCeItem) => void;
   onSwitchToScanner: () => void;
+  onSwitchToActions?: () => void;
   onRestoreBackup?: (items: NFCeItem[], receipts: NFCeReceipt[]) => void;
 }
 
@@ -62,6 +63,7 @@ export const ReportTable: React.FC<ReportTableProps> = ({
   onLoadSample,
   onEditClick,
   onSwitchToScanner,
+  onSwitchToActions,
   onRestoreBackup,
 }) => {
   const [selectedTipo, setSelectedTipo] = useState<string>('Todos');
@@ -318,21 +320,26 @@ export const ReportTable: React.FC<ReportTableProps> = ({
   return (
     <div id="report-table-screen" className="w-full max-w-7xl mx-auto space-y-6 animate-in fade-in duration-300 pb-16">
       {/* Top Statistics KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4">
         {/* Total Gasto / Total Filtrado */}
-        <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
-            <DollarSign className="w-6 h-6" />
+        <div className="p-3 sm:p-4 lg:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex items-center gap-2.5 sm:gap-3.5 min-w-0">
+          <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+            <DollarSign className="w-5 h-5 sm:w-6 sm:h-6" />
           </div>
-          <div>
-            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+          <div className="flex-1 min-w-0">
+            <span className="text-[10px] sm:text-[11px] font-bold text-slate-500 uppercase tracking-wider block truncate">
               {isFiltered ? 'Total Filtrado' : 'Total Acumulado'}
             </span>
-            <span className="text-lg sm:text-2xl font-black text-slate-900 dark:text-white">
-              {formatBRL(totalFiltrado)}
-            </span>
+            <div className="flex items-baseline gap-1 text-slate-900 dark:text-white font-black leading-tight mt-0.5">
+              <span className="text-[11px] sm:text-xs md:text-sm font-bold text-emerald-600 dark:text-emerald-400">
+                R$
+              </span>
+              <span className="text-sm min-[380px]:text-base sm:text-xl lg:text-2xl tracking-tight truncate">
+                {totalFiltrado.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
             {isFiltered && (
-              <span className="text-[10px] text-slate-400 dark:text-slate-500 block font-medium">
+              <span className="text-[9px] sm:text-[10px] text-slate-400 dark:text-slate-500 block font-medium truncate mt-0.5">
                 Total geral: {formatBRL(totalGeral)}
               </span>
             )}
@@ -340,10 +347,10 @@ export const ReportTable: React.FC<ReportTableProps> = ({
         </div>
 
         {/* Alimentação R$/Kg (Média filtrada) */}
-        <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-2xl bg-orange-500/10 text-orange-600 dark:text-orange-400 flex items-center justify-center shrink-0">
+        <div className="p-3 sm:p-4 lg:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex items-center gap-2.5 sm:gap-3.5 min-w-0">
+          <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-orange-500/10 text-orange-600 dark:text-orange-400 flex items-center justify-center shrink-0">
             <svg
-              className="w-7 h-7"
+              className="w-5 h-5 sm:w-6 sm:h-6"
               viewBox="0 0 24 24"
               fill="currentColor"
               aria-hidden="true"
@@ -377,14 +384,25 @@ export const ReportTable: React.FC<ReportTableProps> = ({
               </text>
             </svg>
           </div>
-          <div>
-            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block" title="Média dos itens de Alimentação com peso">
+          <div className="flex-1 min-w-0">
+            <span className="text-[10px] sm:text-[11px] font-bold text-slate-500 uppercase tracking-wider block truncate" title="Média dos itens de Alimentação com peso">
               Alimentação R$/Kg
             </span>
-            <span className="text-lg sm:text-2xl font-black text-slate-900 dark:text-white">
-              {mediaAlimentacaoKg.count > 0 ? formatBRL(mediaAlimentacaoKg.precoPorKgPonderado) : '—'}
-            </span>
-            <span className="text-[10px] text-slate-400 dark:text-slate-500 block font-medium">
+            {mediaAlimentacaoKg.count > 0 ? (
+              <div className="flex items-baseline gap-1 text-slate-900 dark:text-white font-black leading-tight mt-0.5">
+                <span className="text-[11px] sm:text-xs md:text-sm font-bold text-orange-600 dark:text-orange-400">
+                  R$
+                </span>
+                <span className="text-sm min-[380px]:text-base sm:text-xl lg:text-2xl tracking-tight truncate">
+                  {mediaAlimentacaoKg.precoPorKgPonderado.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
+            ) : (
+              <span className="text-sm min-[380px]:text-base sm:text-xl lg:text-2xl font-black text-slate-900 dark:text-white block mt-0.5">
+                —
+              </span>
+            )}
+            <span className="text-[9px] sm:text-[10px] text-slate-400 dark:text-slate-500 block font-medium truncate mt-0.5">
               {mediaAlimentacaoKg.count > 0
                 ? `${mediaAlimentacaoKg.totalPeso.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 })} kg (${mediaAlimentacaoKg.count} ${mediaAlimentacaoKg.count === 1 ? 'item' : 'itens'})`
                 : 'Sem itens com peso'}
@@ -393,19 +411,24 @@ export const ReportTable: React.FC<ReportTableProps> = ({
         </div>
 
         {/* Total Itens */}
-        <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-2xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
-            <Package className="w-6 h-6" />
+        <div className="p-3 sm:p-4 lg:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex items-center gap-2.5 sm:gap-3.5 min-w-0">
+          <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
+            <Package className="w-5 h-5 sm:w-6 sm:h-6" />
           </div>
-          <div>
-            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+          <div className="flex-1 min-w-0">
+            <span className="text-[10px] sm:text-[11px] font-bold text-slate-500 uppercase tracking-wider block truncate">
               {isFiltered ? 'Itens Filtrados' : 'Itens Salvos'}
             </span>
-            <span className="text-lg sm:text-2xl font-black text-slate-900 dark:text-white">
-              {filteredItems.length} <span className="text-xs font-medium text-slate-400">itens</span>
-            </span>
+            <div className="flex items-baseline gap-1 font-black text-slate-900 dark:text-white leading-tight mt-0.5">
+              <span className="text-sm min-[380px]:text-base sm:text-xl lg:text-2xl tracking-tight">
+                {filteredItems.length}
+              </span>
+              <span className="text-[10px] sm:text-xs font-medium text-slate-400">
+                itens
+              </span>
+            </div>
             {isFiltered && (
-              <span className="text-[10px] text-slate-400 dark:text-slate-500 block font-medium">
+              <span className="text-[9px] sm:text-[10px] text-slate-400 dark:text-slate-500 block font-medium truncate mt-0.5">
                 de {items.length} itens salvos
               </span>
             )}
@@ -413,40 +436,27 @@ export const ReportTable: React.FC<ReportTableProps> = ({
         </div>
 
         {/* Total Notas Fiscais */}
-        <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-2xl bg-purple-500/10 text-purple-600 dark:text-purple-400 flex items-center justify-center shrink-0">
-            <Receipt className="w-6 h-6" />
+        <div className="p-3 sm:p-4 lg:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex items-center gap-2.5 sm:gap-3.5 min-w-0">
+          <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-purple-500/10 text-purple-600 dark:text-purple-400 flex items-center justify-center shrink-0">
+            <Receipt className="w-5 h-5 sm:w-6 sm:h-6" />
           </div>
-          <div>
-            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+          <div className="flex-1 min-w-0">
+            <span className="text-[10px] sm:text-[11px] font-bold text-slate-500 uppercase tracking-wider block truncate">
               Notas Fiscais
             </span>
-            <span className="text-lg sm:text-2xl font-black text-slate-900 dark:text-white">
-              {distinctReceiptsCount} <span className="text-xs font-medium text-slate-400">{distinctReceiptsCount === 1 ? 'recibo' : 'recibos'}</span>
-            </span>
+            <div className="flex items-baseline gap-1 font-black text-slate-900 dark:text-white leading-tight mt-0.5">
+              <span className="text-sm min-[380px]:text-base sm:text-xl lg:text-2xl tracking-tight">
+                {distinctReceiptsCount}
+              </span>
+              <span className="text-[10px] sm:text-xs font-medium text-slate-400">
+                {distinctReceiptsCount === 1 ? 'recibo' : 'recibos'}
+              </span>
+            </div>
             {isFiltered && (
-              <span className="text-[10px] text-slate-400 dark:text-slate-500 block font-medium">
+              <span className="text-[9px] sm:text-[10px] text-slate-400 dark:text-slate-500 block font-medium truncate mt-0.5">
                 de {totalDistinctReceiptsCount} {totalDistinctReceiptsCount === 1 ? 'recibo total' : 'recibos totais'}
               </span>
             )}
-          </div>
-        </div>
-
-        {/* Google Sheets Export Ready */}
-        <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-sm">
-            <Table className="w-6 h-6" />
-          </div>
-          <div>
-            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
-              Colunas Formatadas
-            </span>
-            <span className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-1">
-              9 Colunas (6 + 3)
-            </span>
-            <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
-              Google Sheets 100% Compatível
-            </span>
           </div>
         </div>
       </div>
@@ -465,89 +475,23 @@ export const ReportTable: React.FC<ReportTableProps> = ({
                 </span>
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Dados armazenados no LocalStorage com 9 colunas para o Google Sheets
+                Itens organizados por tipo e produto com cálculo automático de R$/Kg
               </p>
             </div>
 
-            {/* Google Sheets Export Actions & Backup Buttons (Large touch buttons) */}
+            {/* Quick Actions & Navigation to Tab 3 */}
             <div className="flex flex-wrap items-center gap-2.5">
-              <button
-                id="copy-to-sheets-btn"
-                type="button"
-                onClick={handleCopyToSheets}
-                disabled={filteredItems.length === 0}
-                className="py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:opacity-50 text-white text-xs sm:text-sm font-bold shadow-md hover:shadow-lg transition-all flex items-center gap-2 min-h-[44px] cursor-pointer"
-              >
-                {copiedSuccess ? (
-                  <>
-                    <Check className="w-4 h-4 text-emerald-200" />
-                    <span>Copiado! Cole no Sheets</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-4 h-4" />
-                    <span>Copiar p/ Google Sheets</span>
-                  </>
-                )}
-              </button>
-
-              <button
-                id="download-csv-btn"
-                type="button"
-                onClick={handleDownloadCSV}
-                disabled={filteredItems.length === 0}
-                className="py-3 px-3.5 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs sm:text-sm font-semibold transition-colors flex items-center gap-1.5 min-h-[44px] cursor-pointer"
-                title="Baixar arquivo CSV compatível com Planilhas"
-              >
-                <Download className="w-4 h-4 text-slate-500" />
-                <span>Baixar CSV</span>
-              </button>
-
-              {/* Backup JSON Button Group */}
-              <div className="flex items-center rounded-xl border border-indigo-200 dark:border-indigo-800/60 bg-indigo-50/50 dark:bg-indigo-950/30 p-0.5">
+              {onSwitchToActions && (
                 <button
-                  id="export-backup-btn"
+                  id="go-to-actions-tab-btn"
                   type="button"
-                  onClick={handleExportBackup}
-                  disabled={items.length === 0}
-                  className="py-2.5 px-3 rounded-lg text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 disabled:opacity-40 disabled:cursor-not-allowed text-xs font-bold transition-colors flex items-center gap-1.5 min-h-[40px] cursor-pointer"
-                  title="Fazer backup de todos os itens salvos em arquivo JSON"
+                  onClick={onSwitchToActions}
+                  className="py-2.5 px-4 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/80 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 text-xs sm:text-sm font-bold shadow-xs transition-colors flex items-center gap-2 min-h-[42px] cursor-pointer"
                 >
-                  <FileDown className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                  <span>Fazer Backup (JSON)</span>
+                  <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                  <span>3. Ações do App (Exportar / Backup)</span>
                 </button>
-
-                <button
-                  id="import-backup-btn"
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="py-2.5 px-3 rounded-lg text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-xs font-bold transition-colors flex items-center gap-1.5 min-h-[40px] cursor-pointer"
-                  title="Restaurar backup de itens a partir de um arquivo JSON"
-                >
-                  <FileUp className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                  <span>Restaurar Backup</span>
-                </button>
-
-                {/* Hidden File Input */}
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".json,application/json"
-                  onChange={handleFileChange}
-                  className="hidden"
-                />
-              </div>
-
-              <a
-                id="open-sheets-link"
-                href="https://sheets.new"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="py-3 px-3.5 rounded-xl bg-slate-900 hover:bg-black dark:bg-slate-100 dark:hover:bg-white text-white dark:text-slate-900 text-xs sm:text-sm font-bold shadow-xs transition-colors flex items-center gap-1.5 min-h-[44px]"
-              >
-                <span>Abrir Google Planilhas</span>
-                <ExternalLink className="w-3.5 h-3.5" />
-              </a>
+              )}
             </div>
           </div>
 

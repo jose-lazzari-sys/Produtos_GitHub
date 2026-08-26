@@ -1,0 +1,70 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["updatedAt"]
+    },
+    "Receipt": {
+      "title": "Receipt",
+      "description": "NFC-e Receipt metadata and summary",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "razaoSocial": { "type": "string" },
+        "data": { "type": "string" },
+        "valorTotal": { "type": "number" },
+        "numeroNota": { "type": "string" },
+        "scannedAt": { "type": "string" },
+        "userId": { "type": "string" }
+      },
+      "required": ["id", "razaoSocial", "data", "valorTotal", "userId"]
+    },
+    "Item": {
+      "title": "Item",
+      "description": "Purchased NFC-e product item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "receiptId": { "type": "string" },
+        "num": { "type": "number" },
+        "descricao": { "type": "string" },
+        "qtd": { "type": "number" },
+        "unidade": { "type": "string" },
+        "pesoKg": { "type": "number" },
+        "precoPorKg": { "type": "number" },
+        "valorUnitario": { "type": "number" },
+        "valorTotal": { "type": "number" },
+        "razaoSocial": { "type": "string" },
+        "data": { "type": "string" },
+        "tipo": { "type": "string" },
+        "produto": { "type": "string" },
+        "detalhe": { "type": "string" },
+        "userId": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "descricao", "qtd", "valorTotal", "razaoSocial", "data", "tipo", "produto", "detalhe", "userId"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Individual user document"
+    },
+    "/users/{userId}/receipts/{receiptId}": {
+      "schema": "Receipt",
+      "description": "Receipts scanned by the user"
+    },
+    "/users/{userId}/items/{itemId}": {
+      "schema": "Item",
+      "description": "Individual purchased items belonging to the user"
+    }
+  }
+}

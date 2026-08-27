@@ -428,17 +428,30 @@ export function parseNFCeHtml(htmlString: string): Omit<NFCeReceipt, 'id' | 'sca
       // Check if this row looks like an item
       if (titEl || /Qtde\.|Vl\. Total|UN|KG/i.test(fullRowText)) {
         // Extract title
-        let descricao = titEl?.textContent?.trim() || '';
-        // Clean up title (remove code like "(Código: 1234)")
-        descricao = descricao.replace(/\(C[oó]digo:[^)]+\)/gi, '').trim();
+        let descricao = '';
+        if (titEl) {
+          const clone = titEl.cloneNode(true) as HTMLElement;
+          // remove child elements from clone to get main text
+          while (clone.firstChild && clone.firstChild.nodeType !== Node.TEXT_NODE) {
+            clone.removeChild(clone.firstChild);
+          }
+          descricao = clone.textContent?.trim() || titEl.textContent?.trim() || '';
+        }
+        // Clean up title (remove "Vl. Total...", code like "(Código: 1234)", qty text)
+        descricao = descricao
+          .replace(/\s*(Qtde?\.?|Qtd:|UN:|Vl\.\s*Unit|Vl\.\s*Total|Valor[\s\S]*)[\s\S]*$/i, '')
+          .replace(/\(C[oó]digo:[^)]+\)/gi, '')
+          .replace(/\s+/g, ' ')
+          .trim();
 
         // Extract qty, unit, unit val, total val from row text
         const qtyMatch = fullRowText.match(/Qtde?\.?:\s*([\d.,]+)/i) || fullRowText.match(/Qtd:\s*([\d.,]+)/i);
         const unMatch = fullRowText.match(/UN:\s*([A-Za-z]+)/i) || fullRowText.match(/(UN|KG|PC|CX|LT|G|DZ)\b/i);
         const unitValMatch = fullRowText.match(/Vl\.\s*Unit\.?:\s*([\d.,]+)/i) || fullRowText.match(/Unit:\s*([\d.,]+)/i);
-        const totalValMatch = fullRowText.match(/Vl\.\s*Total:?\s*([\d.,]+)/i) || 
-                              fullRowText.match(/Total:?\s*([\d.,]+)/i) ||
-                              valEl?.textContent?.match(/([\d.,]+)/);
+        const totalValMatch = row.querySelector('.valor')?.textContent?.trim() ||
+                              fullRowText.match(/Vl\.\s*Total:?\s*([\d.,]+)/i)?.[1] || 
+                              fullRowText.match(/Total:?\s*([\d.,]+)/i)?.[1] ||
+                              valEl?.textContent?.match(/([\d.,]+)/)?.[1];
 
         const qtd = qtyMatch ? parseBRLNumber(qtyMatch[1]) : 1;
         const unidade = unMatch ? unMatch[1].toUpperCase() : 'UN';

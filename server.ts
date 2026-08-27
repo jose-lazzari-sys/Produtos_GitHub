@@ -182,41 +182,107 @@ function extractServerStoreName(htmlOrXml: string, $: cheerio.CheerioAPI): strin
 // Server-side endpoint to fetch and parse Sefaz SP NFC-e
 app.post('/api/parse-nfce', async (req, res) => {
   try {
-    const { url, rawContent } = req.body;
+    const { url, accessKey, rawContent } = req.body;
 
     let htmlOrXml = rawContent;
+    let targetUrl = url ? String(url).trim() : '';
 
-    if (url && !htmlOrXml) {
-      // Validate url
-      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-        return res.status(400).json({
-          success: false,
-          errorMessage: 'URL inválida. O formato deve começar com http:// ou https://'
-        });
+    // If accessKey is provided, or if url contains/is a 44-digit number
+    const keyInput = String(accessKey || targetUrl || '').trim();
+    const allDigits = keyInput.replace(/\D/g, '');
+
+    // Extract 44 fiscal digits
+    let extracted44 = '';
+    if (allDigits.length === 44) {
+      extracted44 = allDigits;
+    } else {
+      const matchInString = keyInput.match(/([0-9]{44})/);
+      if (matchInString) {
+        extracted44 = matchInString[1];
+      } else if (allDigits.length > 44) {
+        // Look for 44-digit sequence starting with Brazilian UF code (11-53)
+        const ufMatch = allDigits.match(/([1-5][0-9]\d{42})/);
+        if (ufMatch) {
+          extracted44 = ufMatch[1];
+        } else {
+          extracted44 = allDigits.slice(0, 44);
+        }
+      }
+    }
+
+    const urlsToTry: string[] = [];
+
+    if (extracted44) {
+      // Prioritize Sefaz SP direct consultation format (|3|1) which provides full HTML item list
+      urlsToTry.push(
+        `https://www.nfce.fazenda.sp.gov.br/NFCeConsultaPublica/Paginas/ConsultaQRCode.aspx?p=${extracted44}|3|1`,
+        `https://www.nfce.fazenda.sp.gov.br/NFCeConsultaPublica/Paginas/ConsultaQRCode.aspx?p=${extracted44}|3|1|1`,
+        `https://www.nfce.fazenda.sp.gov.br/NFCeConsultaPublica/Paginas/ConsultaQRCode.aspx?p=${extracted44}|2|1`,
+        `https://www.nfce.fazenda.sp.gov.br/NFCeConsultaPublica/Paginas/ConsultaQRCode.aspx?p=${extracted44}|2|1|1|`,
+        `https://www.nfce.fazenda.sp.gov.br/NFCeConsultaPublica/Paginas/ConsultaQRCode.aspx?p=${extracted44}|1|1`,
+        `https://www.nfce.fazenda.sp.gov.br/qrcode?p=${extracted44}|3|1`
+      );
+    }
+
+    if (targetUrl && (targetUrl.startsWith('http://') || targetUrl.startsWith('https://'))) {
+      if (!urlsToTry.includes(targetUrl)) {
+        urlsToTry.push(targetUrl);
+      }
+    }
+
+    if (urlsToTry.length > 0 && !htmlOrXml) {
+      targetUrl = urlsToTry[0];
+      let fetchSuccess = false;
+      let lastFetchErr: any = null;
+
+      for (const tryUrl of urlsToTry) {
+        try {
+          const response = await axios.get(tryUrl, {
+            timeout: 10000,
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+              'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+              'Cache-Control': 'no-cache',
+              'Pragma': 'no-cache'
+            },
+            maxRedirects: 5,
+            validateStatus: (status) => status >= 200 && status < 400
+          });
+
+          const bodyContent = response.data;
+          if (bodyContent && typeof bodyContent === 'string') {
+            // If body has products or table, we found a direct match!
+            if (/tabResult|NFCCabecalho|totalNota|Vl\.\s*Total|Qtde\.|txtTit|txtTopo/i.test(bodyContent)) {
+              htmlOrXml = bodyContent;
+              targetUrl = tryUrl;
+              fetchSuccess = true;
+              break;
+            } else if (!htmlOrXml) {
+              htmlOrXml = bodyContent;
+            }
+          }
+        } catch (fetchErr: any) {
+          lastFetchErr = fetchErr;
+          console.error(`Error fetching Sefaz URL (${tryUrl}):`, fetchErr.message);
+        }
       }
 
-      try {
-        const response = await axios.get(url, {
-          timeout: 12000,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-            'Cache-Control': 'no-cache'
-          },
-          maxRedirects: 5,
-          validateStatus: (status) => status >= 200 && status < 400
-        });
-
-        htmlOrXml = response.data;
-      } catch (fetchErr: any) {
-        console.error('Error fetching Sefaz URL:', fetchErr.message);
+      if (!htmlOrXml) {
         return res.json({
           success: false,
           captchaDetected: true,
           needsManualInput: true,
-          url,
-          errorMessage: 'Não foi possível acessar diretamente a Sefaz SP (bloqueio ou captcha). Abra manualmente e cole o XML aqui.'
+          url: targetUrl,
+          chaveAcesso: extracted44 || undefined,
+          errorMessage: 'A Sefaz SP protegeu a consulta com desafio de segurança (Captcha). Abra a página da Sefaz e cole o XML ou texto da nota.'
+        });
+      }
+    } else if (!htmlOrXml && targetUrl) {
+      if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://') && !extracted44) {
+        return res.status(400).json({
+          success: false,
+          errorMessage: 'Formato inválido. Digite uma URL válida ou os 44 números da Chave de Acesso.'
         });
       }
     }
@@ -237,8 +303,9 @@ app.post('/api/parse-nfce', async (req, res) => {
         success: false,
         captchaDetected: true,
         needsManualInput: true,
-        url: url || '',
-        errorMessage: 'A página da Sefaz SP exige validação de Captcha. Abra manualmente e cole o XML/HTML aqui.'
+        url: targetUrl || url || '',
+        chaveAcesso: extracted44 || undefined,
+        errorMessage: 'A Sefaz SP exige resolução de validação de segurança (Captcha).'
       });
     }
 
@@ -329,20 +396,28 @@ app.post('/api/parse-nfce', async (req, res) => {
       const valEl = $(row).find('.Rval, .valor, td:last-child').first();
 
       if (titEl.length > 0 || /Qtde\.|Vl\. Total|UN|KG/i.test(rowText)) {
-        let descricao = titEl.text().trim() || '';
-        descricao = descricao.replace(/\(C[oó]digo:[^)]+\)/gi, '').trim();
+        let descricao = titEl.clone().children().remove().end().text().trim();
+        if (!descricao) {
+          descricao = titEl.text().trim();
+        }
+        descricao = descricao
+          .replace(/\s*(Qtde?\.?|Qtd:|UN:|Vl\.\s*Unit|Vl\.\s*Total|Valor[\s\S]*)[\s\S]*$/i, '')
+          .replace(/\(C[oó]digo:[^)]+\)/gi, '')
+          .replace(/\s+/g, ' ')
+          .trim();
 
         const qtyMatch = rowText.match(/Qtde?\.?:\s*([\d.,]+)/i) || rowText.match(/Qtd:\s*([\d.,]+)/i);
         const unMatch = rowText.match(/UN:\s*([A-Za-z]+)/i) || rowText.match(/(UN|KG|PC|CX|LT|G|DZ)\b/i);
         const unitValMatch = rowText.match(/Vl\.\s*Unit\.?:\s*([\d.,]+)/i) || rowText.match(/Unit:\s*([\d.,]+)/i);
-        const totalValMatch = rowText.match(/Vl\.\s*Total:?\s*([\d.,]+)/i) || 
-                              rowText.match(/Total:?\s*([\d.,]+)/i) ||
-                              valEl.text().match(/([\d.,]+)/);
+        const totalValMatch = $(row).find('.valor').text().trim() ||
+                              rowText.match(/Vl\.\s*Total:?\s*([\d.,]+)/i)?.[1] || 
+                              rowText.match(/Total:?\s*([\d.,]+)/i)?.[1] ||
+                              valEl.text().match(/([\d.,]+)/)?.[1];
 
         const qtd = qtyMatch ? parseNumberBRL(qtyMatch[1]) : 1;
         const unidade = unMatch ? unMatch[1].toUpperCase() : 'UN';
         const valorUnitario = unitValMatch ? parseNumberBRL(unitValMatch[1]) : 0;
-        let valorItem = totalValMatch ? parseNumberBRL(totalValMatch[1]) : 0;
+        let valorItem = totalValMatch ? parseNumberBRL(totalValMatch) : 0;
 
         if (valorItem === 0 && valorUnitario > 0 && qtd > 0) {
           valorItem = valorUnitario * qtd;

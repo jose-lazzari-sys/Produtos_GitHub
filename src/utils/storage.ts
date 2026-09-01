@@ -1,6 +1,7 @@
 import { NFCeItem, NFCeReceipt } from '../types';
 import { classifyProduct } from './classifier';
 import { extractPesoKg, calculatePrecoPorKg } from './weightUtils';
+import { parseCsvData } from './csvImporter';
 
 const STORAGE_KEY_ITEMS = 'nfce_items_v1';
 const STORAGE_KEY_RECEIPTS = 'nfce_receipts_v1';
@@ -38,18 +39,24 @@ export function getStoredItems(): NFCeItem[] {
           pesoKg = extractPesoKg(item.descricao, item.qtd, item.unidade, item.tipo);
           hasChanged = true;
         }
-        if ((precoPorKg === undefined || precoPorKg === null) && pesoKg > 0) {
+        if ((precoPorKg === undefined || precoPorKg === null) && pesoKg && pesoKg > 0) {
           precoPorKg = calculatePrecoPorKg(item.valorTotal, pesoKg, item.qtd, item.tipo, item.unidade);
           hasChanged = true;
         }
       } else {
-        pesoKg = 0;
-        precoPorKg = 0;
+        if (pesoKg === undefined || pesoKg === null) pesoKg = 0;
+        if (precoPorKg === undefined || precoPorKg === null) precoPorKg = 0;
       }
+
+      // Preserve the exact item num manually set by the user or default to index+1
+      const num = item.num !== undefined && item.num !== null && !isNaN(Number(item.num))
+        ? Number(item.num)
+        : idx + 1;
 
       return {
         ...item,
         id: itemId,
+        num,
         pesoKg,
         precoPorKg,
         razaoSocial: razao,
@@ -107,12 +114,18 @@ export function getStoredReceipts(): NFCeReceipt[] {
       }
       seenReceiptIds.add(rcptId);
 
-      return {
+      const conferidoStatus: 'Sim' | '-' = rcpt.conferido === 'Sim' ? 'Sim' : '-';
+      const itemsSum = (rcpt.itens || []).reduce((acc, it) => acc + (it.valorTotal || 0), 0);
+      const exactValorTotal = (rcpt.itens && rcpt.itens.length > 0) ? Number(itemsSum.toFixed(2)) : (rcpt.valorTotal || 0);
+
+      const sanitizedReceipt: NFCeReceipt = {
         ...rcpt,
         id: rcptId,
         razaoSocial: receiptRazao,
         data: receiptData,
-        itens: (rcpt.itens || []).map((item) => {
+        valorTotal: exactValorTotal,
+        conferido: conferidoStatus,
+        itens: (rcpt.itens || []).map((item, idx) => {
           let itemRazao = item.razaoSocial;
           if (!itemRazao || itemRazao === 'Estabelecimento Sefaz SP' || itemRazao === 'Estabelecimento Comercial') {
             itemRazao = receiptRazao;
@@ -125,15 +138,23 @@ export function getStoredReceipts(): NFCeReceipt[] {
           }
           seenItemIds.add(itemId);
 
+          // Preserve the item's num exactly as saved by the user
+          const num = item.num !== undefined && item.num !== null && !isNaN(Number(item.num))
+            ? Number(item.num)
+            : idx + 1;
+
           return {
             ...item,
             id: itemId,
+            num,
             receiptId: item.receiptId || rcptId,
             razaoSocial: itemRazao,
             data: item.data || receiptData
           };
         })
       };
+
+      return sanitizedReceipt;
     });
 
     if (hasChanged) {
@@ -265,13 +286,58 @@ export function addStoredItem(newItem: NFCeItem): NFCeItem[] {
 export function updateStoredItem(updatedItem: NFCeItem): NFCeItem[] {
   const items = getStoredItems();
   const index = items.findIndex(i => 
-    i.id === updatedItem.id || 
-    (i.num === updatedItem.num && i.descricao === updatedItem.descricao)
+    (updatedItem.id && i.id === updatedItem.id) || 
+    (i.descricao === updatedItem.descricao && i.data === updatedItem.data && Math.abs((i.valorTotal || 0) - (updatedItem.valorTotal || 0)) < 0.01) ||
+    (i.descricao === updatedItem.descricao && i.data === updatedItem.data)
   );
+
+  const exactNum = updatedItem.num !== undefined && updatedItem.num !== null && !isNaN(Number(updatedItem.num))
+    ? Number(updatedItem.num)
+    : (index !== -1 ? items[index].num : 1);
+
+  const finalItem: NFCeItem = {
+    ...(index !== -1 ? items[index] : {}),
+    ...updatedItem,
+    num: exactNum,
+  };
+
   if (index !== -1) {
-    items[index] = updatedItem;
-    saveStoredItems(items);
+    items[index] = finalItem;
+  } else {
+    items.push(finalItem);
   }
+  saveStoredItems(items);
+
+  // Also synchronize the update in receipts
+  const currentReceipts = getStoredReceipts();
+  let receiptsChanged = false;
+  const updatedReceipts = currentReceipts.map(rcpt => {
+    const itemIndexInRcpt = (rcpt.itens || []).findIndex(it =>
+      (updatedItem.id && it.id === updatedItem.id) ||
+      (it.descricao === updatedItem.descricao && (it.data === updatedItem.data || rcpt.data === updatedItem.data))
+    );
+
+    if (itemIndexInRcpt !== -1) {
+      receiptsChanged = true;
+      const updatedRcptItens = [...rcpt.itens];
+      updatedRcptItens[itemIndexInRcpt] = {
+        ...updatedRcptItens[itemIndexInRcpt],
+        ...finalItem,
+        num: exactNum,
+      };
+      return {
+        ...rcpt,
+        itens: updatedRcptItens,
+        valorTotal: updatedRcptItens.reduce((acc, it) => acc + (it.valorTotal || 0), 0),
+      };
+    }
+    return rcpt;
+  });
+
+  if (receiptsChanged) {
+    saveStoredReceipts(updatedReceipts);
+  }
+
   return items;
 }
 
@@ -503,7 +569,34 @@ export function downloadBackupJSON(): void {
   }
 }
 
-export function importBackupData(rawContent: string): { success: boolean; items: NFCeItem[]; receipts: NFCeReceipt[]; error?: string } {
+export function importBackupData(rawContent: string, mode: 'merge' | 'replace' = 'merge'): { success: boolean; items: NFCeItem[]; receipts: NFCeReceipt[]; error?: string; newItemsCount?: number } {
+  if (!rawContent || !rawContent.trim()) {
+    return { success: false, items: [], receipts: [], error: 'O arquivo selecionado está vazio.' };
+  }
+
+  const currentItems = mode === 'merge' ? getStoredItems() : [];
+  const currentReceipts = mode === 'merge' ? getStoredReceipts() : [];
+
+  // First check if it looks like CSV / TSV text (has semicolons, commas, or tabs with multiple lines)
+  const trimmed = rawContent.trim();
+  const isLikelyCsv = !trimmed.startsWith('{') && !trimmed.startsWith('[') && (trimmed.includes(';') || trimmed.includes(',') || trimmed.includes('\t'));
+
+  if (isLikelyCsv) {
+    const csvResult = parseCsvData(rawContent, currentItems, currentReceipts);
+    if (csvResult.success && csvResult.items.length > 0) {
+      saveStoredItems(csvResult.items);
+      saveStoredReceipts(csvResult.receipts);
+      const reloadedItems = getStoredItems();
+      const reloadedReceipts = getStoredReceipts();
+      return {
+        success: true,
+        items: reloadedItems,
+        receipts: reloadedReceipts,
+        newItemsCount: csvResult.newItemsCount
+      };
+    }
+  }
+
   try {
     const parsed = JSON.parse(rawContent);
 
@@ -523,13 +616,48 @@ export function importBackupData(rawContent: string): { success: boolean; items:
     }
 
     if (itemsToImport.length === 0 && receiptsToImport.length === 0) {
+      // Try CSV fallback
+      const csvResult = parseCsvData(rawContent, currentItems, currentReceipts);
+      if (csvResult.success) {
+        saveStoredItems(csvResult.items);
+        saveStoredReceipts(csvResult.receipts);
+        return {
+          success: true,
+          items: getStoredItems(),
+          receipts: getStoredReceipts(),
+          newItemsCount: csvResult.newItemsCount
+        };
+      }
       return { success: false, items: [], receipts: [], error: 'O arquivo selecionado não contém itens ou recibos válidos.' };
     }
 
+    // If mode is merge, combine without duplicate IDs
+    let finalItems = itemsToImport;
+    let finalReceipts = receiptsToImport;
+
+    if (mode === 'merge' && currentItems.length > 0) {
+      const existingSignatures = new Set(
+        currentItems.map(it => `${it.data}___${it.razaoSocial}___${it.descricao.trim().toLowerCase()}___${it.qtd}___${it.valorTotal}`)
+      );
+      const newItemsFiltered = itemsToImport.filter(
+        it => !existingSignatures.has(`${it.data}___${it.razaoSocial}___${it.descricao.trim().toLowerCase()}___${it.qtd}___${it.valorTotal}`)
+      );
+      finalItems = [...currentItems, ...newItemsFiltered];
+
+      const existingReceiptMap = new Map(currentReceipts.map(r => [`${r.data}___${r.razaoSocial}`, r]));
+      receiptsToImport.forEach(rcpt => {
+        const key = `${rcpt.data}___${rcpt.razaoSocial}`;
+        if (!existingReceiptMap.has(key)) {
+          existingReceiptMap.set(key, rcpt);
+        }
+      });
+      finalReceipts = Array.from(existingReceiptMap.values());
+    }
+
     // Save items and receipts
-    saveStoredItems(itemsToImport);
-    if (receiptsToImport.length > 0) {
-      saveStoredReceipts(receiptsToImport);
+    saveStoredItems(finalItems);
+    if (finalReceipts.length > 0) {
+      saveStoredReceipts(finalReceipts);
     }
 
     const reloadedItems = getStoredItems();
@@ -538,15 +666,211 @@ export function importBackupData(rawContent: string): { success: boolean; items:
     return {
       success: true,
       items: reloadedItems,
-      receipts: reloadedReceipts
+      receipts: reloadedReceipts,
+      newItemsCount: finalItems.length - currentItems.length
     };
   } catch (err: any) {
+    // Try CSV parser as final fallback
+    const csvResult = parseCsvData(rawContent, currentItems, currentReceipts);
+    if (csvResult.success && csvResult.items.length > 0) {
+      saveStoredItems(csvResult.items);
+      saveStoredReceipts(csvResult.receipts);
+      return {
+        success: true,
+        items: getStoredItems(),
+        receipts: getStoredReceipts(),
+        newItemsCount: csvResult.newItemsCount
+      };
+    }
+
     console.error('Erro ao importar backup:', err);
     return {
       success: false,
       items: [],
       receipts: [],
-      error: err?.message || 'Arquivo JSON inválido ou corrompido.'
+      error: err?.message || 'Arquivo inválido ou não reconhecido.'
     };
   }
+}
+
+/**
+ * Updates the 'conferido' status of a receipt ('Sim' or '-')
+ */
+export function updateReceiptConferido(receiptId: string, conferido: 'Sim' | '-'): { items: NFCeItem[]; receipts: NFCeReceipt[] } {
+  const currentReceipts = getStoredReceipts();
+  const currentItems = getStoredItems();
+  const confStatus: 'Sim' | '-' = conferido === 'Sim' ? 'Sim' : '-';
+
+  const existingIndex = currentReceipts.findIndex(r => r.id === receiptId);
+  let updatedReceipts: NFCeReceipt[];
+
+  if (existingIndex >= 0) {
+    updatedReceipts = currentReceipts.map(rcpt => {
+      if (rcpt.id === receiptId) {
+        return {
+          ...rcpt,
+          conferido: confStatus
+        };
+      }
+      return rcpt;
+    });
+  } else {
+    // If it was reconciled from items, find matching items and insert
+    const matchingItems = currentItems.filter(it => it.receiptId === receiptId);
+    const firstItem = matchingItems[0] || currentItems[0];
+    const newRcpt: NFCeReceipt = {
+      id: receiptId,
+      razaoSocial: firstItem?.razaoSocial || 'SENDAS DISTRIBUIDORA S/A',
+      data: firstItem?.data || new Date().toLocaleString('pt-BR'),
+      valorTotal: matchingItems.reduce((acc, it) => acc + (it.valorTotal || 0), 0),
+      itens: matchingItems,
+      scannedAt: new Date().toISOString(),
+      conferido: confStatus
+    };
+    updatedReceipts = [...currentReceipts, newRcpt];
+  }
+
+  saveStoredReceipts(updatedReceipts);
+  return { items: currentItems, receipts: updatedReceipts };
+}
+
+/**
+ * Deletes a receipt and all its associated items from storage
+ */
+export function deleteReceiptAndItsItems(receiptId: string): { items: NFCeItem[]; receipts: NFCeReceipt[] } {
+  const currentReceipts = getStoredReceipts();
+  const currentItems = getStoredItems();
+
+  const targetReceipt = currentReceipts.find(r => r.id === receiptId);
+  const updatedReceipts = currentReceipts.filter(r => r.id !== receiptId);
+
+  // Filter out items belonging to this receipt
+  const updatedItems = currentItems.filter(item => {
+    if (item.receiptId && item.receiptId === receiptId) return false;
+    if (targetReceipt && item.data === targetReceipt.data && item.razaoSocial === targetReceipt.razaoSocial) {
+      return false;
+    }
+    return true;
+  });
+
+  // Renumber remaining items
+  const renumberedItems = updatedItems.map((item, idx) => ({
+    ...item,
+    num: idx + 1
+  }));
+
+  saveStoredReceipts(updatedReceipts);
+  saveStoredItems(renumberedItems);
+
+  return { items: renumberedItems, receipts: updatedReceipts };
+}
+
+/**
+ * Parses Brazilian date strings (DD/MM/YYYY HH:mm:ss), ISO strings, or standard dates
+ * into a numerical timestamp for accurate chronological sorting.
+ */
+export function parseDateToTimestamp(dateStr?: string): number {
+  if (!dateStr || typeof dateStr !== 'string') return 0;
+  const trimmed = dateStr.trim();
+  if (!trimmed) return 0;
+
+  // Format DD/MM/YYYY or DD/MM/YYYY HH:mm:ss or DD/MM/YYYY, HH:mm:ss
+  const brMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ ,T]+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+  if (brMatch) {
+    const day = parseInt(brMatch[1], 10);
+    const month = parseInt(brMatch[2], 10) - 1;
+    const year = parseInt(brMatch[3], 10);
+    const hours = brMatch[4] ? parseInt(brMatch[4], 10) : 0;
+    const minutes = brMatch[5] ? parseInt(brMatch[5], 10) : 0;
+    const seconds = brMatch[6] ? parseInt(brMatch[6], 10) : 0;
+    const dt = new Date(year, month, day, hours, minutes, seconds);
+    if (!isNaN(dt.getTime())) return dt.getTime();
+  }
+
+  // Format YYYY-MM-DD or ISO string
+  const isoMatch = trimmed.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ ,T]+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+  if (isoMatch) {
+    const year = parseInt(isoMatch[1], 10);
+    const month = parseInt(isoMatch[2], 10) - 1;
+    const day = parseInt(isoMatch[3], 10);
+    const hours = isoMatch[4] ? parseInt(isoMatch[4], 10) : 0;
+    const minutes = isoMatch[5] ? parseInt(isoMatch[5], 10) : 0;
+    const seconds = isoMatch[6] ? parseInt(isoMatch[6], 10) : 0;
+    const dt = new Date(year, month, day, hours, minutes, seconds);
+    if (!isNaN(dt.getTime())) return dt.getTime();
+  }
+
+  const parsed = Date.parse(trimmed);
+  return isNaN(parsed) ? 0 : parsed;
+}
+
+/**
+ * Reconciles stored receipts with items, ensuring that if items exist,
+ * corresponding notes/receipts are structured with accurate totals and item counts.
+ */
+export function reconcileReceiptsWithItems(receipts: NFCeReceipt[], items: NFCeItem[]): NFCeReceipt[] {
+  if (items.length === 0) return [];
+
+  // Map existing receipts by ID
+  const receiptMap = new Map<string, NFCeReceipt>();
+  receipts.forEach(rcpt => {
+    receiptMap.set(rcpt.id, {
+      ...rcpt,
+      conferido: rcpt.conferido === 'Sim' ? 'Sim' : '-',
+      itens: [] // will populate strictly from active items
+    });
+  });
+
+  // Group items by receiptId or (data + razaoSocial)
+  const orphanGroups = new Map<string, NFCeItem[]>();
+
+  items.forEach(item => {
+    if (item.receiptId && receiptMap.has(item.receiptId)) {
+      const rcpt = receiptMap.get(item.receiptId)!;
+      rcpt.itens.push(item);
+    } else {
+      const groupKey = item.receiptId || `${item.data || 'Sem Data'}___${item.razaoSocial || 'Estabelecimento'}`;
+      if (!orphanGroups.has(groupKey)) {
+        orphanGroups.set(groupKey, []);
+      }
+      orphanGroups.get(groupKey)!.push(item);
+    }
+  });
+
+  // Add orphan groups as receipts if not present
+  orphanGroups.forEach((groupItems, groupKey) => {
+    const firstItem = groupItems[0];
+    const totalVal = groupItems.reduce((acc, it) => acc + (it.valorTotal || 0), 0);
+    const existing = receipts.find(r => r.id === groupKey || (r.data === firstItem.data && r.razaoSocial === firstItem.razaoSocial));
+
+    const newRcpt: NFCeReceipt = {
+      id: existing?.id || (firstItem.receiptId || generateUniqueId('rcpt')),
+      razaoSocial: firstItem.razaoSocial || 'SENDAS DISTRIBUIDORA S/A',
+      data: firstItem.data || new Date().toLocaleString('pt-BR'),
+      valorTotal: totalVal,
+      itens: groupItems,
+      scannedAt: existing?.scannedAt || new Date().toISOString(),
+      conferido: existing?.conferido === 'Sim' ? 'Sim' : '-'
+    };
+    receiptMap.set(newRcpt.id, newRcpt);
+  });
+
+  // Filter out any receipts that have 0 active items, and compute the EXACT total from active items
+  const finalReceipts = Array.from(receiptMap.values())
+    .filter(rcpt => rcpt.itens && rcpt.itens.length > 0)
+    .map(rcpt => {
+      const computedTotal = rcpt.itens.reduce((acc, it) => acc + (it.valorTotal || 0), 0);
+      return {
+        ...rcpt,
+        valorTotal: Math.round(computedTotal * 100) / 100
+      };
+    })
+    .sort((a, b) => {
+      // Sort newest first chronologically by invoice date
+      const timeA = parseDateToTimestamp(a.data) || parseDateToTimestamp(a.scannedAt);
+      const timeB = parseDateToTimestamp(b.data) || parseDateToTimestamp(b.scannedAt);
+      return timeB - timeA;
+    });
+
+  return finalReceipts;
 }

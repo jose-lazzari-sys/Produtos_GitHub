@@ -9,7 +9,8 @@ import {
   CheckCircle,
   Sparkles,
   Info,
-  Cloud
+  Cloud,
+  FileText
 } from 'lucide-react';
 import { NFCeItem, NFCeReceipt } from './types';
 import {
@@ -23,27 +24,33 @@ import {
   clearAllStorage,
   generateSampleData,
   saveStoredItems,
-  saveStoredReceipts
+  saveStoredReceipts,
+  updateReceiptConferido,
+  deleteReceiptAndItsItems,
+  reconcileReceiptsWithItems
 } from './utils/storage';
 import { 
   loginWithGoogle, 
   logoutUser, 
   syncDataToCloud, 
+  debouncedSyncToCloud,
   loadDataFromCloud,
-  subscribeToCloudData 
+  subscribeToCloudData,
+  subscribeToQuotaStatus
 } from './utils/cloudSync';
 import { auth, onAuthStateChanged, User } from './lib/firebase';
 import { QRScanner } from './components/QRScanner';
 import { ReceiptSummaryCard } from './components/ReceiptSummaryCard';
 import { ReportTable } from './components/ReportTable';
+import { NfAppTab } from './components/NfAppTab';
 import { AppActionsTab } from './components/AppActionsTab';
 import { XmlPasteModal } from './components/XmlPasteModal';
 import { EditItemModal } from './components/EditItemModal';
 import { CloudSyncHeader } from './components/CloudSyncHeader';
 
 export default function App() {
-  // Navigation: 'scanner' (Screen 1) | 'report' (Screen 2) | 'actions' (Screen 3)
-  const [activeTab, setActiveTab] = useState<'scanner' | 'report' | 'actions'>('scanner');
+  // Navigation: 'scanner' (Screen 1) | 'report' (Screen 2) | 'nfApp' (Screen 3) | 'actions' (Screen 4)
+  const [activeTab, setActiveTab] = useState<'scanner' | 'report' | 'nfApp' | 'actions'>('scanner');
 
   // Persistence State
   const [items, setItems] = useState<NFCeItem[]>([]);
@@ -54,6 +61,7 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   const [cloudBannerDismissed, setCloudBannerDismissed] = useState(false);
+  const [isQuotaExceeded, setIsQuotaExceeded] = useState(false);
 
   // Currently scanned receipt awaiting confirmation
   const [pendingReceipt, setPendingReceipt] = useState<NFCeReceipt | null>(null);
@@ -111,7 +119,7 @@ export default function App() {
             setLastSyncedAt(new Date());
           },
           (err) => {
-            console.error('Snapshot error:', err);
+            console.warn('Snapshot error:', err);
             setIsSyncing(false);
           }
         );
@@ -124,23 +132,21 @@ export default function App() {
       }
     });
 
+    const unsubscribeQuota = subscribeToQuotaStatus((exceeded) => {
+      setIsQuotaExceeded(exceeded);
+    });
+
     return () => {
       unsubscribeAuth();
+      unsubscribeQuota();
     };
   }, []);
 
   // Helper to sync to Cloud whenever state changes if user is logged in
-  const syncChangesToCloud = async (newItems: NFCeItem[], newReceipts: NFCeReceipt[]) => {
+  const syncChangesToCloud = (newItems: NFCeItem[], newReceipts: NFCeReceipt[]) => {
     if (!user) return;
-    try {
-      setIsSyncing(true);
-      await syncDataToCloud(user.uid, newItems, newReceipts, user.email);
-      setLastSyncedAt(new Date());
-    } catch (e) {
-      console.error('Falha ao sincronizar com nuvem:', e);
-    } finally {
-      setIsSyncing(false);
-    }
+    debouncedSyncToCloud(user.uid, newItems, newReceipts, user.email);
+    setLastSyncedAt(new Date());
   };
 
   // Login handler
@@ -249,8 +255,10 @@ export default function App() {
   // Update single item
   const handleUpdateItem = (updated: NFCeItem) => {
     const updatedList = updateStoredItem(updated);
+    const updatedReceipts = getStoredReceipts();
     setItems([...updatedList]);
-    syncChangesToCloud(updatedList, receipts);
+    setReceipts([...updatedReceipts]);
+    syncChangesToCloud(updatedList, updatedReceipts);
   };
 
   // Open manual item creation modal
@@ -347,6 +355,26 @@ export default function App() {
     syncChangesToCloud(restoredItems, restoredReceipts);
   };
 
+  // Reconciled Receipts ensuring all receipts/notes in app are visible with totals
+  const reconciledReceipts = React.useMemo(() => {
+    return reconcileReceiptsWithItems(receipts, items);
+  }, [receipts, items]);
+
+  // Update receipt conferido status ('Sim' | '-')
+  const handleUpdateReceiptConferido = (receiptId: string, conferido: 'Sim' | '-') => {
+    const result = updateReceiptConferido(receiptId, conferido);
+    setReceipts(result.receipts);
+    syncChangesToCloud(items, result.receipts);
+  };
+
+  // Delete a receipt and its items
+  const handleDeleteReceipt = (receiptId: string) => {
+    const result = deleteReceiptAndItsItems(receiptId);
+    setItems(result.items);
+    setReceipts(result.receipts);
+    syncChangesToCloud(result.items, result.receipts);
+  };
+
   const handleOpenXmlModal = (url?: string, initialError?: string) => {
     setXmlModalUrl(url);
     setXmlModalError(initialError);
@@ -418,6 +446,30 @@ export default function App() {
             </button>
 
             <button
+              id="desktop-tab-nfapp"
+              onClick={() => setActiveTab('nfApp')}
+              className={`py-2 px-4 md:px-5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 ${
+                activeTab === 'nfApp'
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              <FileText className="w-4 h-4" />
+              <span>3. N.F. no APP</span>
+              {reconciledReceipts.length > 0 && (
+                <span
+                  className={`text-[11px] px-2 py-0.5 rounded-full font-bold ${
+                    activeTab === 'nfApp'
+                      ? 'bg-emerald-700 text-emerald-100'
+                      : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                  }`}
+                >
+                  {reconciledReceipts.length}
+                </span>
+              )}
+            </button>
+
+            <button
               id="desktop-tab-actions"
               onClick={() => setActiveTab('actions')}
               className={`py-2 px-4 md:px-5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 ${
@@ -427,7 +479,7 @@ export default function App() {
               }`}
             >
               <Sparkles className="w-4 h-4" />
-              <span>3. Ações do App</span>
+              <span>4. Ações do App</span>
             </button>
           </nav>
 
@@ -438,6 +490,7 @@ export default function App() {
               isSyncing={isSyncing}
               lastSyncedAt={lastSyncedAt}
               itemsCount={items.length}
+              isQuotaExceeded={isQuotaExceeded}
               onLogin={handleLogin}
               onLogout={handleLogout}
               onManualSync={handleManualSync}
@@ -550,11 +603,23 @@ export default function App() {
           />
         )}
 
-        {/* Screen 3: Ações do App (Google Sheets, CSV, Backup Offline) */}
+        {/* Screen 3: N.F. no APP */}
+        {activeTab === 'nfApp' && (
+          <NfAppTab
+            receipts={reconciledReceipts}
+            items={items}
+            onUpdateReceiptConferido={handleUpdateReceiptConferido}
+            onDeleteReceipt={handleDeleteReceipt}
+            onViewItemsInReport={() => setActiveTab('report')}
+            onSwitchToScanner={() => setActiveTab('scanner')}
+          />
+        )}
+
+        {/* Screen 4: Ações do App (Google Sheets, CSV, Backup Offline) */}
         {activeTab === 'actions' && (
           <AppActionsTab
             items={items}
-            receipts={receipts}
+            receipts={reconciledReceipts}
             onRestoreBackup={handleRestoreBackup}
             onGoToReport={() => setActiveTab('report')}
           />
@@ -562,51 +627,71 @@ export default function App() {
       </main>
 
       {/* Mobile Bottom Navigation Bar (Large touch targets for smartphones) */}
-      <div className="sm:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 px-3 py-2 flex items-center justify-around shadow-2xl">
+      <div className="sm:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 px-2 py-2 flex items-center justify-around shadow-2xl">
         <button
           id="mobile-nav-scanner"
           onClick={() => setActiveTab('scanner')}
-          className={`flex-1 py-2 px-2 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all ${
+          className={`flex-1 py-2 px-1 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all ${
             activeTab === 'scanner'
               ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 font-bold'
               : 'text-slate-500 dark:text-slate-400 font-medium'
           }`}
         >
-          <QrCode className="w-5 h-5" />
-          <span className="text-[11px] leading-none">1. Leitor QR</span>
+          <QrCode className="w-4 h-4" />
+          <span className="text-[10px] leading-none">1. Leitor</span>
         </button>
 
         <button
           id="mobile-nav-report"
           onClick={() => setActiveTab('report')}
-          className={`flex-1 py-2 px-2 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all relative ${
+          className={`flex-1 py-2 px-1 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all relative ${
             activeTab === 'report'
               ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 font-bold'
               : 'text-slate-500 dark:text-slate-400 font-medium'
           }`}
         >
           <div className="relative">
-            <TableIcon className="w-5 h-5" />
+            <TableIcon className="w-4 h-4" />
             {items.length > 0 && (
-              <span className="absolute -top-1.5 -right-3 px-1.5 py-0.2 text-[10px] font-black rounded-full bg-emerald-600 text-white">
+              <span className="absolute -top-1.5 -right-2.5 px-1 py-0.1 text-[9px] font-black rounded-full bg-emerald-600 text-white">
                 {items.length}
               </span>
             )}
           </div>
-          <span className="text-[11px] leading-none">2. Relatório</span>
+          <span className="text-[10px] leading-none">2. Itens</span>
+        </button>
+
+        <button
+          id="mobile-nav-nfapp"
+          onClick={() => setActiveTab('nfApp')}
+          className={`flex-1 py-2 px-1 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all relative ${
+            activeTab === 'nfApp'
+              ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 font-bold'
+              : 'text-slate-500 dark:text-slate-400 font-medium'
+          }`}
+        >
+          <div className="relative">
+            <FileText className="w-4 h-4" />
+            {reconciledReceipts.length > 0 && (
+              <span className="absolute -top-1.5 -right-2.5 px-1 py-0.1 text-[9px] font-black rounded-full bg-emerald-600 text-white">
+                {reconciledReceipts.length}
+              </span>
+            )}
+          </div>
+          <span className="text-[10px] leading-none">3. N.F. APP</span>
         </button>
 
         <button
           id="mobile-nav-actions"
           onClick={() => setActiveTab('actions')}
-          className={`flex-1 py-2 px-2 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all ${
+          className={`flex-1 py-2 px-1 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all ${
             activeTab === 'actions'
               ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 font-bold'
               : 'text-slate-500 dark:text-slate-400 font-medium'
           }`}
         >
-          <Sparkles className="w-5 h-5" />
-          <span className="text-[11px] leading-none">3. Ações</span>
+          <Sparkles className="w-4 h-4" />
+          <span className="text-[10px] leading-none">4. Ações</span>
         </button>
       </div>
 

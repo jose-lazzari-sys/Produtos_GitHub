@@ -147,12 +147,15 @@ export const AppActionsTab: React.FC<AppActionsTabProps> = ({
       const content = event.target?.result as string;
       if (!content) return;
 
-      const result = importBackupData(content);
+      const result = importBackupData(content, 'merge');
       if (result.success) {
         onRestoreBackup(result.items, result.receipts);
+        const addedMsg = result.newItemsCount !== undefined && result.newItemsCount > 0
+          ? `✓ ${result.newItemsCount} novos itens adicionados com sucesso! O aplicativo agora contém um total de ${result.items.length} itens em ${result.receipts.length} recibos.`
+          : `✓ Dados sincronizados com sucesso! Total de ${result.items.length} itens e ${result.receipts.length} recibos carregados.`;
         setNotice({
           type: 'success',
-          text: `✓ Backup restaurado com sucesso! ${result.items.length} itens e ${result.receipts.length} recibos foram carregados no aplicativo.`
+          text: addedMsg
         });
         setTimeout(() => setNotice(null), 7000);
       } else {
@@ -389,24 +392,24 @@ export const AppActionsTab: React.FC<AppActionsTabProps> = ({
                 <span>Fazer Backup (JSON)</span>
               </button>
 
-              {/* Restaurar Backup */}
+              {/* Restaurar Backup / CSV */}
               <button
                 id="action-import-backup-btn"
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 className="py-3.5 px-4 rounded-2xl border-2 border-indigo-500/30 dark:border-indigo-500/40 hover:bg-indigo-50 dark:hover:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-bold text-xs sm:text-sm transition-colors flex items-center justify-center gap-2 min-h-[48px] cursor-pointer"
-                title="Restaurar backup de itens a partir de um arquivo JSON"
+                title="Importar planilha CSV / TXT ou restaurar backup JSON"
               >
                 <FileUp className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
-                <span>Restaurar Backup</span>
+                <span>Importar CSV / Backup</span>
               </button>
             </div>
 
-            {/* Hidden File Input for JSON Backup */}
+            {/* Hidden File Input for CSV / TSV / JSON */}
             <input
               ref={fileInputRef}
               type="file"
-              accept=".json,application/json"
+              accept=".csv,.tsv,.txt,.json,text/csv,text/plain,application/json"
               onChange={handleFileChange}
               className="hidden"
             />

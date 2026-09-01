@@ -154,7 +154,7 @@ export const EditItemModal: React.FC<EditItemModalProps> = ({
 
     const updated: NFCeItem = {
       ...item,
-      num: !isNaN(parsedNum) && parsedNum > 0 ? parsedNum : item.num || 1,
+      num: !isNaN(parsedNum) ? parsedNum : (item.num !== undefined ? item.num : 1),
       descricao,
       unidade: (unidade || 'UN').trim().toUpperCase(),
       qtd: parsedQtdNum,

@@ -15,6 +15,8 @@ import {
   Sparkles,
   Layers,
   ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
   Tag,
   AlertCircle,
   Building2,
@@ -37,7 +39,7 @@ import {
   GOOGLE_SHEETS_HEADERS
 } from '../utils/exporter';
 import { TIPO_OPTIONS, CATEGORY_RULES } from '../utils/classifier';
-import { downloadBackupJSON, importBackupData } from '../utils/storage';
+import { downloadBackupJSON, importBackupData, parseDateToTimestamp } from '../utils/storage';
 
 interface ReportTableProps {
   items: NFCeItem[];
@@ -72,8 +74,9 @@ export const ReportTable: React.FC<ReportTableProps> = ({
   const [copiedSuccess, setCopiedSuccess] = useState(false);
   const [backupNotice, setBackupNotice] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [sortField, setSortField] = useState<'num' | 'valorTotal' | 'data' | 'descricao' | 'precoPorKg'>('num');
-  const [sortAsc, setSortAsc] = useState(true);
+  // Default sorting: Data from most recent to oldest (mais atual para o mais antigo)
+  const [sortField, setSortField] = useState<'num' | 'valorTotal' | 'data' | 'descricao' | 'precoPorKg'>('data');
+  const [sortAsc, setSortAsc] = useState(false);
 
   // Store Name Batch Modal state
   const [isStoreModalOpen, setIsStoreModalOpen] = useState(false);
@@ -163,13 +166,21 @@ export const ReportTable: React.FC<ReportTableProps> = ({
         } else if (sortField === 'descricao') {
           valA = (a.descricao || '').toLowerCase();
           valB = (b.descricao || '').toLowerCase();
+        } else if (sortField === 'data') {
+          valA = parseDateToTimestamp(a.data);
+          valB = parseDateToTimestamp(b.data);
+          if (valA !== valB) {
+            return sortAsc ? valA - valB : valB - valA;
+          }
+          // Tie-breaker when date is identical: sort by item sequence num
+          return (a.num || 0) - (b.num || 0);
         } else if (sortField === 'precoPorKg') {
           valA = a.precoPorKg || (a.tipo === 'Alimentação' && a.pesoKg ? calculatePrecoPorKg(a.valorTotal, a.pesoKg, a.qtd, a.tipo, a.unidade) : 0);
           valB = b.precoPorKg || (b.tipo === 'Alimentação' && b.pesoKg ? calculatePrecoPorKg(b.valorTotal, b.pesoKg, b.qtd, b.tipo, b.unidade) : 0);
         }
         if (valA < valB) return sortAsc ? -1 : 1;
         if (valA > valB) return sortAsc ? 1 : -1;
-        return 0;
+        return (a.num || 0) - (b.num || 0);
       });
   }, [searchFilteredBaseItems, selectedTipo, selectedProduto, sortField, sortAsc]);
 
@@ -313,8 +324,19 @@ export const ReportTable: React.FC<ReportTableProps> = ({
       setSortAsc(!sortAsc);
     } else {
       setSortField(field);
-      setSortAsc(true);
+      setSortAsc(field === 'data' ? false : true);
     }
+  };
+
+  const renderSortIcon = (field: 'num' | 'valorTotal' | 'data' | 'descricao' | 'precoPorKg') => {
+    if (sortField !== field) {
+      return <ArrowUpDown className="w-3 h-3 opacity-30 group-hover:opacity-70 transition-opacity" />;
+    }
+    return sortAsc ? (
+      <ArrowUp className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+    ) : (
+      <ArrowDown className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+    );
   };
 
   return (
@@ -710,30 +732,42 @@ export const ReportTable: React.FC<ReportTableProps> = ({
               <tr className="bg-slate-100/90 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 font-bold uppercase tracking-wider select-none">
                 <th
                   onClick={() => handleSort('num')}
-                  className="p-3 sm:p-3.5 w-12 text-center cursor-pointer hover:text-slate-900 dark:hover:text-white"
+                  className={`p-3 sm:p-3.5 w-12 text-center cursor-pointer transition-colors ${
+                    sortField === 'num'
+                      ? 'text-emerald-700 dark:text-emerald-300 bg-emerald-50/50 dark:bg-emerald-950/20'
+                      : 'hover:text-slate-900 dark:hover:text-white'
+                  }`}
                 >
                   <div className="flex items-center justify-center gap-1">
                     <span>1. Num</span>
-                    <ArrowUpDown className="w-3 h-3 opacity-50" />
+                    {renderSortIcon('num')}
                   </div>
                 </th>
                 <th
                   onClick={() => handleSort('descricao')}
-                  className="p-3 sm:p-3.5 min-w-[170px] cursor-pointer hover:text-slate-900 dark:hover:text-white"
+                  className={`p-3 sm:p-3.5 min-w-[170px] cursor-pointer transition-colors ${
+                    sortField === 'descricao'
+                      ? 'text-emerald-700 dark:text-emerald-300 bg-emerald-50/50 dark:bg-emerald-950/20'
+                      : 'hover:text-slate-900 dark:hover:text-white'
+                  }`}
                 >
                   <div className="flex items-center gap-1">
                     <span>2. Descrição</span>
-                    <ArrowUpDown className="w-3 h-3 opacity-50" />
+                    {renderSortIcon('descricao')}
                   </div>
                 </th>
                 <th className="p-3 sm:p-3.5 w-16 text-right">3. Qtd.</th>
                 <th
                   onClick={() => handleSort('valorTotal')}
-                  className="p-3 sm:p-3.5 w-24 text-right cursor-pointer hover:text-slate-900 dark:hover:text-white"
+                  className={`p-3 sm:p-3.5 w-24 text-right cursor-pointer transition-colors ${
+                    sortField === 'valorTotal'
+                      ? 'text-emerald-700 dark:text-emerald-300 bg-emerald-50/50 dark:bg-emerald-950/20'
+                      : 'hover:text-slate-900 dark:hover:text-white'
+                  }`}
                 >
                   <div className="flex items-center justify-end gap-1">
                     <span>4. Valor(R$)</span>
-                    <ArrowUpDown className="w-3 h-3 opacity-50" />
+                    {renderSortIcon('valorTotal')}
                   </div>
                 </th>
                 <th className="p-3 sm:p-3.5 min-w-[160px]">
@@ -752,21 +786,30 @@ export const ReportTable: React.FC<ReportTableProps> = ({
                 </th>
                 <th
                   onClick={() => handleSort('data')}
-                  className="p-3 sm:p-3.5 w-28 cursor-pointer hover:text-slate-900 dark:hover:text-white"
+                  className={`p-3 sm:p-3.5 w-28 cursor-pointer transition-colors ${
+                    sortField === 'data'
+                      ? 'text-emerald-700 dark:text-emerald-300 bg-emerald-50/50 dark:bg-emerald-950/20 font-extrabold'
+                      : 'hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                  title="Ordenar por data (mais recente / mais antigo)"
                 >
                   <div className="flex items-center gap-1">
                     <span>6. Data</span>
-                    <ArrowUpDown className="w-3 h-3 opacity-50" />
+                    {renderSortIcon('data')}
                   </div>
                 </th>
                 <th
                   onClick={() => handleSort('precoPorKg')}
-                  className="p-3 sm:p-3.5 w-24 text-right cursor-pointer hover:text-slate-900 dark:hover:text-white"
+                  className={`p-3 sm:p-3.5 w-24 text-right cursor-pointer transition-colors ${
+                    sortField === 'precoPorKg'
+                      ? 'text-emerald-700 dark:text-emerald-300 bg-emerald-50/50 dark:bg-emerald-950/20'
+                      : 'hover:text-slate-900 dark:hover:text-white'
+                  }`}
                   title="Preço por Quilo (R$/Kg)"
                 >
                   <div className="flex items-center justify-end gap-1">
                     <span>R$/Kg</span>
-                    <ArrowUpDown className="w-3 h-3 opacity-50" />
+                    {renderSortIcon('precoPorKg')}
                   </div>
                 </th>
                 {/* 3 Additional Classification Columns */}

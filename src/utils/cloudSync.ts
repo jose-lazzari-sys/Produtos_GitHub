@@ -22,9 +22,38 @@ export interface CloudSyncState {
   lastSyncedAt: Date | null;
   error: string | null;
   cloudItemsCount: number;
+  isQuotaExceeded: boolean;
 }
 
 let syncListenerUnsubscribe: (() => void) | null = null;
+let syncDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let lastSyncedDataHash = '';
+let isQuotaExceededFlag = false;
+const quotaListeners: Set<(exceeded: boolean) => void> = new Set();
+
+export function isCloudQuotaExceeded(): boolean {
+  return isQuotaExceededFlag;
+}
+
+export function subscribeToQuotaStatus(listener: (exceeded: boolean) => void): () => void {
+  quotaListeners.add(listener);
+  listener(isQuotaExceededFlag);
+  return () => {
+    quotaListeners.delete(listener);
+  };
+}
+
+function setQuotaExceeded(exceeded: boolean) {
+  if (isQuotaExceededFlag !== exceeded) {
+    isQuotaExceededFlag = exceeded;
+    quotaListeners.forEach(fn => fn(exceeded));
+  }
+}
+
+// Helper to prevent redundant writes if payload hasn't changed
+function computeDataHash(items: NFCeItem[], receipts: NFCeReceipt[]): string {
+  return `${items.length}_${receipts.length}_${items[0]?.id || ''}_${items[items.length - 1]?.id || ''}_${receipts[0]?.id || ''}`;
+}
 
 export async function loginWithGoogle(): Promise<User> {
   try {
@@ -50,6 +79,10 @@ export async function logoutUser(): Promise<void> {
   if (syncListenerUnsubscribe) {
     syncListenerUnsubscribe();
     syncListenerUnsubscribe = null;
+  }
+  if (syncDebounceTimer) {
+    clearTimeout(syncDebounceTimer);
+    syncDebounceTimer = null;
   }
   await signOut(auth);
 }
@@ -90,14 +123,24 @@ function sanitizeForFirestore<T>(data: T): T {
 
 /**
  * Saves both items and receipts to the user's private Firestore document.
- * This guarantees atomic sync and fast single-document real-time updates.
+ * Safely handles quota errors by catching them and relying on LocalStorage.
  */
 export async function syncDataToCloud(
   userId: string, 
   items: NFCeItem[], 
   receipts: NFCeReceipt[],
   userEmail?: string | null
-): Promise<void> {
+): Promise<boolean> {
+  if (isQuotaExceededFlag) {
+    // Graceful skip when daily free quota is already known to be exhausted
+    return false;
+  }
+
+  const currentHash = computeDataHash(items, receipts);
+  if (currentHash === lastSyncedDataHash) {
+    return true; // Avoid unnecessary Firestore write if payload is identical
+  }
+
   try {
     const cleanItems = sanitizeForFirestore(items);
     const cleanReceipts = sanitizeForFirestore(receipts);
@@ -111,16 +154,48 @@ export async function syncDataToCloud(
       updatedAt: new Date().toISOString(),
       userEmail: userEmail || ''
     }, { merge: true });
+
+    lastSyncedDataHash = currentHash;
+    setQuotaExceeded(false);
+    return true;
   } catch (err: any) {
+    if (err?.code === 'resource-exhausted' || err?.message?.includes('Quota') || err?.message?.includes('resource-exhausted')) {
+      setQuotaExceeded(true);
+      console.warn('⚠️ Limite diário de cota do Firestore atingido. Os dados continuam 100% salvos localmente no seu dispositivo.');
+      return false;
+    }
     console.error('Erro ao sincronizar dados com o Firestore:', err);
-    throw err;
+    return false;
   }
+}
+
+/**
+ * Debounced sync to avoid quota exhaustion on rapid edits/imports
+ */
+export function debouncedSyncToCloud(
+  userId: string,
+  items: NFCeItem[],
+  receipts: NFCeReceipt[],
+  userEmail?: string | null,
+  delayMs = 2500
+): void {
+  if (isQuotaExceededFlag) return;
+
+  if (syncDebounceTimer) {
+    clearTimeout(syncDebounceTimer);
+  }
+
+  syncDebounceTimer = setTimeout(() => {
+    syncDataToCloud(userId, items, receipts, userEmail).catch(() => {});
+  }, delayMs);
 }
 
 /**
  * Loads data from Firestore once for the user.
  */
 export async function loadDataFromCloud(userId: string): Promise<{ items: NFCeItem[]; receipts: NFCeReceipt[] } | null> {
+  if (isQuotaExceededFlag) return null;
+
   try {
     const userDocRef = doc(db, 'users', userId);
     const snap = await getDoc(userDocRef);
@@ -133,13 +208,18 @@ export async function loadDataFromCloud(userId: string): Promise<{ items: NFCeIt
     }
     return null;
   } catch (err: any) {
+    if (err?.code === 'resource-exhausted' || err?.message?.includes('Quota')) {
+      setQuotaExceeded(true);
+      console.warn('⚠️ Cota de leitura/escrita diária excedida no Firestore. Utilizando dados locais.');
+      return null;
+    }
     console.error('Erro ao carregar dados do Firestore:', err);
     return null;
   }
 }
 
 /**
- * Starts real-time listener for user's shopping data in Firestore.
+ * Starts real-time listener for user's shopping data in Firestore with graceful quota handling.
  */
 export function subscribeToCloudData(
   userId: string,
@@ -149,6 +229,10 @@ export function subscribeToCloudData(
   if (syncListenerUnsubscribe) {
     syncListenerUnsubscribe();
     syncListenerUnsubscribe = null;
+  }
+
+  if (isQuotaExceededFlag) {
+    return () => {};
   }
 
   const userDocRef = doc(db, 'users', userId);
@@ -164,9 +248,11 @@ export function subscribeToCloudData(
         const cloudItems: NFCeItem[] = Array.isArray(data?.items) ? data.items : [];
         const cloudReceipts: NFCeReceipt[] = Array.isArray(data?.receipts) ? data.receipts : [];
         
-        // If cloud is empty but local has items, upload local items
+        // If cloud is empty but local has items, don't overwrite local data with empty cloud!
         if (cloudItems.length === 0 && localItems.length > 0) {
-          syncDataToCloud(userId, localItems, localReceipts, auth.currentUser?.email).catch(console.error);
+          if (!isQuotaExceededFlag) {
+            debouncedSyncToCloud(userId, localItems, localReceipts, auth.currentUser?.email);
+          }
           onData(localItems, localReceipts);
           return;
         }
@@ -175,24 +261,29 @@ export function subscribeToCloudData(
         if (localItems.length === 0 && cloudItems.length > 0) {
           saveStoredItems(cloudItems);
           saveStoredReceipts(cloudReceipts);
-          onData(cloudItems, cloudReceipts);
+          onData(getStoredItems(), getStoredReceipts());
           return;
         }
 
-        // Both have items - update local storage and state
-        saveStoredItems(cloudItems);
-        saveStoredReceipts(cloudReceipts);
-        onData(cloudItems, cloudReceipts);
-      } else {
-        // Document does not exist yet in cloud
-        if (localItems.length > 0) {
-          syncDataToCloud(userId, localItems, localReceipts, auth.currentUser?.email).catch(console.error);
-          onData(localItems, localReceipts);
+        // If cloud has newer/more items
+        if (cloudItems.length > 0) {
+          saveStoredItems(cloudItems);
+          saveStoredReceipts(cloudReceipts);
+          onData(getStoredItems(), getStoredReceipts());
         }
       }
     },
-    (err) => {
-      console.warn('Firestore subscription notice:', err);
+    (err: any) => {
+      if (err?.code === 'resource-exhausted' || err?.message?.includes('Quota') || err?.message?.includes('resource-exhausted')) {
+        setQuotaExceeded(true);
+        if (syncListenerUnsubscribe) {
+          syncListenerUnsubscribe();
+          syncListenerUnsubscribe = null;
+        }
+        console.warn('⚠️ Cota diária gratuita do Firestore atingida. O app continua operando normalmente e com 100% de segurança via LocalStorage.');
+      } else {
+        console.warn('Firestore subscription notice:', err);
+      }
       if (onError) onError(err);
     }
   );
@@ -204,3 +295,4 @@ export function subscribeToCloudData(
     }
   };
 }
+

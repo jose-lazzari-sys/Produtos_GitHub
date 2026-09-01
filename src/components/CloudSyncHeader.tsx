@@ -10,7 +10,8 @@ import {
   ShieldCheck,
   UploadCloud,
   DownloadCloud,
-  Check
+  Check,
+  AlertCircle
 } from 'lucide-react';
 import { User } from '../lib/firebase';
 
@@ -19,6 +20,7 @@ interface CloudSyncHeaderProps {
   isSyncing: boolean;
   lastSyncedAt: Date | null;
   itemsCount: number;
+  isQuotaExceeded?: boolean;
   onLogin: () => void;
   onLogout: () => void;
   onManualSync: () => void;
@@ -31,6 +33,7 @@ export const CloudSyncHeader: React.FC<CloudSyncHeaderProps> = ({
   isSyncing,
   lastSyncedAt,
   itemsCount,
+  isQuotaExceeded = false,
   onLogin,
   onLogout,
   onManualSync,
@@ -60,11 +63,21 @@ export const CloudSyncHeader: React.FC<CloudSyncHeaderProps> = ({
           <button
             id="cloud-sync-user-btn"
             onClick={() => setShowUserMenu(!showUserMenu)}
-            className="flex items-center gap-2 py-1.5 px-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 text-xs font-semibold hover:bg-emerald-100 dark:hover:bg-emerald-900/80 transition-all shadow-xs"
-            title="Sincronização em tempo real ativa na Nuvem"
+            className={`flex items-center gap-2 py-1.5 px-3 rounded-xl border text-xs font-semibold transition-all shadow-xs ${
+              isQuotaExceeded
+                ? 'bg-amber-50 dark:bg-amber-950/60 border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200 hover:bg-amber-100'
+                : 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-100 dark:hover:bg-emerald-900/80'
+            }`}
+            title={
+              isQuotaExceeded
+                ? 'Cota diária da nuvem atingida. Modo Local ativo e 100% seguro.'
+                : 'Sincronização em tempo real ativa na Nuvem'
+            }
           >
             {isSyncing ? (
               <RefreshCw className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 animate-spin" />
+            ) : isQuotaExceeded ? (
+              <CloudOff className="w-4 h-4 text-amber-600 dark:text-amber-400" />
             ) : (
               <CloudCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
             )}
@@ -81,11 +94,11 @@ export const CloudSyncHeader: React.FC<CloudSyncHeaderProps> = ({
                 <UserIcon className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
               )}
               <span className="max-w-[120px] truncate hidden sm:inline font-bold">
-                {user.displayName || user.email?.split('@')[0] || 'Nuvem Conectada'}
+                {user.displayName || user.email?.split('@')[0] || 'Nuvem'}
               </span>
             </div>
 
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span className={`w-2 h-2 rounded-full ${isQuotaExceeded ? 'bg-amber-500' : 'bg-emerald-500 animate-pulse'}`}></span>
           </button>
 
           {/* User Popover Menu */}
@@ -125,7 +138,9 @@ export const CloudSyncHeader: React.FC<CloudSyncHeaderProps> = ({
                       <ShieldCheck className="w-3.5 h-3.5" />
                       Status da Nuvem:
                     </span>
-                    <span className="font-bold text-emerald-600 dark:text-emerald-400">Tempo Real Ativo</span>
+                    <span className={`font-bold ${isQuotaExceeded ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                      {isQuotaExceeded ? 'Modo Local (Cota Atingida)' : 'Tempo Real Ativo'}
+                    </span>
                   </div>
                   <div className="flex items-center justify-between text-xs text-slate-700 dark:text-slate-300">
                     <span>Itens neste aparelho:</span>
@@ -139,12 +154,21 @@ export const CloudSyncHeader: React.FC<CloudSyncHeaderProps> = ({
                   )}
                 </div>
 
+                {isQuotaExceeded && (
+                  <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 flex items-start gap-2 text-[11px] text-amber-800 dark:text-amber-200">
+                    <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                    <div>
+                      <strong>Cota Diária Gratuita Atingida:</strong> A cota gratuita do banco Firestore é renovada diariamente. Todos os seus dados continuam 100% salvos e protegidos localmente neste aparelho.
+                    </div>
+                  </div>
+                )}
+
                 <div className="pt-1 flex flex-col gap-2">
                   <button
                     id="cloud-force-upload-btn"
                     onClick={() => {
                       if (onForceUpload) onForceUpload();
-                      showToast(`${itemsCount} itens enviados para a nuvem!`);
+                      showToast(`${itemsCount} itens processados!`);
                       setShowUserMenu(false);
                     }}
                     disabled={isSyncing}
@@ -158,7 +182,7 @@ export const CloudSyncHeader: React.FC<CloudSyncHeaderProps> = ({
                     id="cloud-force-download-btn"
                     onClick={() => {
                       if (onForceDownload) onForceDownload();
-                      showToast('Buscando dados mais recentes da nuvem...');
+                      showToast('Buscando dados mais recentes...');
                       setShowUserMenu(false);
                     }}
                     disabled={isSyncing}
@@ -199,3 +223,4 @@ export const CloudSyncHeader: React.FC<CloudSyncHeaderProps> = ({
     </div>
   );
 };
+

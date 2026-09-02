@@ -38,8 +38,8 @@ import {
   copyToClipboard,
   GOOGLE_SHEETS_HEADERS
 } from '../utils/exporter';
-import { TIPO_OPTIONS, CATEGORY_RULES } from '../utils/classifier';
-import { downloadBackupJSON, importBackupData, parseDateToTimestamp } from '../utils/storage';
+import { TIPO_OPTIONS, CATEGORY_RULES, getItemTipo } from '../utils/classifier';
+import { downloadBackupJSON, importBackupData, importBackupMatrix, parseDateToTimestamp } from '../utils/storage';
 
 interface ReportTableProps {
   items: NFCeItem[];
@@ -101,8 +101,11 @@ export const ReportTable: React.FC<ReportTableProps> = ({
   // Items filtered by Search Query AND Tipo filter (basis for the available Produto dropdown)
   const itemsMatchingSearchAndTipo = useMemo(() => {
     return searchFilteredBaseItems.filter((item) => {
-      if (selectedTipo !== 'Todos' && item.tipo !== selectedTipo) {
-        return false;
+      if (selectedTipo !== 'Todos') {
+        const itemTipo = getItemTipo(item);
+        if (itemTipo !== selectedTipo) {
+          return false;
+        }
       }
       return true;
     });
@@ -145,12 +148,18 @@ export const ReportTable: React.FC<ReportTableProps> = ({
     return searchFilteredBaseItems
       .filter((item) => {
         // Filter by Tipo
-        if (selectedTipo !== 'Todos' && item.tipo !== selectedTipo) {
-          return false;
+        if (selectedTipo !== 'Todos') {
+          const itemTipo = getItemTipo(item);
+          if (itemTipo !== selectedTipo) {
+            return false;
+          }
         }
         // Filter by Produto
-        if (selectedProduto !== 'Todos' && item.produto !== selectedProduto) {
-          return false;
+        if (selectedProduto !== 'Todos') {
+          const itemProd = item.produto?.trim() || 'Outros';
+          if (itemProd !== selectedProduto) {
+            return false;
+          }
         }
         return true;
       })
@@ -236,7 +245,7 @@ export const ReportTable: React.FC<ReportTableProps> = ({
     };
 
     searchFilteredBaseItems.forEach((it) => {
-      const t = it.tipo in counts ? it.tipo : 'Outros';
+      const t = getItemTipo(it);
       counts[t].count += 1;
       counts[t].total += it.valorTotal || 0;
     });
@@ -279,43 +288,79 @@ export const ReportTable: React.FC<ReportTableProps> = ({
     }
   };
 
-  // Import JSON Backup
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Import Backup (JSON / Excel / CSV)
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const content = event.target?.result as string;
-      if (!content) return;
-
-      const result = importBackupData(content);
-      if (result.success) {
-        if (onRestoreBackup) {
-          onRestoreBackup(result.items, result.receipts);
+    try {
+      if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
+        const XLSX = await import('xlsx');
+        const buffer = await file.arrayBuffer();
+        const wb = XLSX.read(buffer, { type: 'array' });
+        const allRows: (string | number | null | undefined)[][] = [];
+        for (const sheetName of wb.SheetNames) {
+          const sheet = wb.Sheets[sheetName];
+          if (sheet) {
+            const sheetRows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: '' }) as (string | number)[][];
+            if (sheetRows && sheetRows.length > 0) {
+              allRows.push(...sheetRows);
+            }
+          }
         }
-        setBackupNotice({
-          type: 'success',
-          text: `Backup restaurado com sucesso! ${result.items.length} itens e ${result.receipts.length} recibos carregados no aplicativo.`
-        });
-        setTimeout(() => setBackupNotice(null), 7000);
+        const result = importBackupMatrix(allRows);
+        if (result.success) {
+          if (onRestoreBackup) {
+            onRestoreBackup(result.items, result.receipts);
+          }
+          setBackupNotice({
+            type: 'success',
+            text: `Arquivo Excel carregado com sucesso! ${result.items.length} itens e ${result.receipts.length} recibos carregados no aplicativo.`
+          });
+          setTimeout(() => setBackupNotice(null), 7000);
+        } else {
+          setBackupNotice({
+            type: 'error',
+            text: result.error || 'Erro ao processar o arquivo Excel.'
+          });
+          setTimeout(() => setBackupNotice(null), 7000);
+        }
       } else {
-        setBackupNotice({
-          type: 'error',
-          text: result.error || 'Erro ao processar o arquivo de backup.'
-        });
-        setTimeout(() => setBackupNotice(null), 7000);
+        let content = await file.text();
+        if (content.includes('\ufffd')) {
+          const reader = new FileReader();
+          content = await new Promise((resolve) => {
+            reader.onload = (event) => resolve((event.target?.result as string) || '');
+            reader.readAsText(file, 'ISO-8859-1');
+          });
+        }
+
+        const result = importBackupData(content);
+        if (result.success) {
+          if (onRestoreBackup) {
+            onRestoreBackup(result.items, result.receipts);
+          }
+          setBackupNotice({
+            type: 'success',
+            text: `Arquivo carregado com sucesso! ${result.items.length} itens e ${result.receipts.length} recibos carregados no aplicativo.`
+          });
+          setTimeout(() => setBackupNotice(null), 7000);
+        } else {
+          setBackupNotice({
+            type: 'error',
+            text: result.error || 'Erro ao processar o arquivo de backup.'
+          });
+          setTimeout(() => setBackupNotice(null), 7000);
+        }
       }
-    };
-    reader.onerror = () => {
+    } catch (err: any) {
       setBackupNotice({
         type: 'error',
-        text: 'Erro ao ler o arquivo selecionado.'
+        text: 'Erro ao ler o arquivo selecionado: ' + (err?.message || '')
       });
       setTimeout(() => setBackupNotice(null), 6000);
-    };
+    }
 
-    reader.readAsText(file);
     e.target.value = '';
   };
 

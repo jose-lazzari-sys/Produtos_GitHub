@@ -35,7 +35,7 @@ export interface CategoryRule {
   tipo: string;
   produto: string;
   detalhe: string;
-  keywords: string[];
+  keywords?: string[];
 }
 
 export interface ParseNFCeResponse {

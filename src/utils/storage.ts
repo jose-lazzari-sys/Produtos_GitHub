@@ -1,13 +1,56 @@
 import { NFCeItem, NFCeReceipt } from '../types';
-import { classifyProduct } from './classifier';
+import { classifyProduct, getItemTipo, normalizeTipo, normalizeProduto, learnItemClassification, getDetalheForTipoProduto, CATEGORY_RULES } from './classifier';
 import { extractPesoKg, calculatePrecoPorKg } from './weightUtils';
-import { parseCsvData } from './csvImporter';
+import { parseCsvData, parseMatrixData } from './csvImporter';
 
 const STORAGE_KEY_ITEMS = 'nfce_items_v1';
 const STORAGE_KEY_RECEIPTS = 'nfce_receipts_v1';
 
 export function generateUniqueId(prefix = 'item'): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}_${Math.floor(Math.random() * 1000000)}`;
+}
+
+/**
+ * Ensures that for every NF / Receipt, its items are strictly numbered 1..N (1, 2, 3 ... N),
+ * in full accordance with the official SEFAZ invoice standard.
+ */
+export function normalizeItemsNumbering(items: NFCeItem[]): NFCeItem[] {
+  if (!items || items.length === 0) return [];
+
+  // Group items by receipt ID or grouping key (data + razaoSocial)
+  const groupMap = new Map<string, NFCeItem[]>();
+  const groupOrder: string[] = [];
+
+  items.forEach((it) => {
+    const key = it.receiptId || `${it.data || ''}___${it.razaoSocial || ''}`;
+    if (!groupMap.has(key)) {
+      groupMap.set(key, []);
+      groupOrder.push(key);
+    }
+    groupMap.get(key)!.push(it);
+  });
+
+  const normalizedItems: NFCeItem[] = [];
+
+  groupOrder.forEach((key) => {
+    const group = groupMap.get(key)!;
+    // If items in the group have a positive num, keep them ordered by that sequence
+    group.sort((a, b) => {
+      const numA = (typeof a.num === 'number' && !isNaN(a.num) && a.num > 0) ? a.num : 999999;
+      const numB = (typeof b.num === 'number' && !isNaN(b.num) && b.num > 0) ? b.num : 999999;
+      return numA - numB;
+    });
+
+    // Renumber strictly 1..N for this NF
+    group.forEach((item, index) => {
+      normalizedItems.push({
+        ...item,
+        num: index + 1
+      });
+    });
+  });
+
+  return normalizedItems;
 }
 
 export function getStoredItems(): NFCeItem[] {
@@ -18,7 +61,7 @@ export function getStoredItems(): NFCeItem[] {
     let hasChanged = false;
     const seenIds = new Set<string>();
 
-    const sanitized = items.map((item, idx) => {
+    const sanitized = items.map((item) => {
       let razao = item.razaoSocial;
       if (!razao || razao === 'Estabelecimento Sefaz SP' || razao === 'Estabelecimento Comercial') {
         razao = 'SENDAS DISTRIBUIDORA S/A';
@@ -31,16 +74,49 @@ export function getStoredItems(): NFCeItem[] {
       }
       seenIds.add(itemId);
 
+      let tipo = normalizeTipo(item.tipo);
+      let produto = normalizeProduto(item.produto, tipo);
+      let detalhe = item.detalhe?.trim() || 'Outros';
+
+      // If tipo or produto ended up as Outros, try historical memory fallback
+      if (tipo === 'Outros' || produto === 'Outros') {
+        const autoClass = classifyProduct(item.descricao);
+        if (autoClass.tipo !== 'Outros') {
+          if (tipo === 'Outros') tipo = autoClass.tipo as any;
+          if (produto === 'Outros') produto = autoClass.produto;
+          if (!detalhe || detalhe === 'Outros') detalhe = autoClass.detalhe;
+          hasChanged = true;
+        }
+      }
+
+      if (!detalhe || detalhe === 'Outros') {
+        const fixedDetalhe = getDetalheForTipoProduto(tipo, produto);
+        if (fixedDetalhe && fixedDetalhe !== 'Outros') {
+          detalhe = fixedDetalhe;
+          hasChanged = true;
+        }
+      }
+
+      if (item.tipo !== tipo) {
+        hasChanged = true;
+      }
+      if (item.produto !== produto) {
+        hasChanged = true;
+      }
+
       let pesoKg = item.pesoKg;
       let precoPorKg = item.precoPorKg;
 
-      if (item.tipo === 'Alimentação') {
-        if (pesoKg === undefined || pesoKg === null) {
-          pesoKg = extractPesoKg(item.descricao, item.qtd, item.unidade, item.tipo);
-          hasChanged = true;
+      if (tipo === 'Alimentação') {
+        if (pesoKg === undefined || pesoKg === null || pesoKg === 0) {
+          const calculatedPeso = extractPesoKg(item.descricao, item.qtd, item.unidade, tipo);
+          if (calculatedPeso && calculatedPeso > 0) {
+            pesoKg = calculatedPeso;
+            hasChanged = true;
+          }
         }
-        if ((precoPorKg === undefined || precoPorKg === null) && pesoKg && pesoKg > 0) {
-          precoPorKg = calculatePrecoPorKg(item.valorTotal, pesoKg, item.qtd, item.tipo, item.unidade);
+        if ((precoPorKg === undefined || precoPorKg === null || precoPorKg === 0) && pesoKg && pesoKg > 0) {
+          precoPorKg = calculatePrecoPorKg(item.valorTotal, pesoKg, item.qtd, tipo, item.unidade);
           hasChanged = true;
         }
       } else {
@@ -48,15 +124,12 @@ export function getStoredItems(): NFCeItem[] {
         if (precoPorKg === undefined || precoPorKg === null) precoPorKg = 0;
       }
 
-      // Preserve the exact item num manually set by the user or default to index+1
-      const num = item.num !== undefined && item.num !== null && !isNaN(Number(item.num))
-        ? Number(item.num)
-        : idx + 1;
-
       return {
         ...item,
         id: itemId,
-        num,
+        tipo,
+        produto,
+        detalhe,
         pesoKg,
         precoPorKg,
         razaoSocial: razao,
@@ -64,10 +137,16 @@ export function getStoredItems(): NFCeItem[] {
       };
     });
 
-    if (hasChanged) {
-      saveStoredItems(sanitized);
+    const normalized = normalizeItemsNumbering(sanitized);
+
+    if (normalized.some((it, i) => it.num !== items[i]?.num)) {
+      hasChanged = true;
     }
-    return sanitized;
+
+    if (hasChanged) {
+      saveStoredItems(normalized);
+    }
+    return normalized;
   } catch (err) {
     console.error('Error loading items from localStorage:', err);
     return [];
@@ -83,6 +162,12 @@ export function saveStoredItems(items: NFCeItem[]): void {
         itemId = generateUniqueId('item');
       }
       seenIds.add(itemId);
+
+      // Auto-train intelligent historical memory for valid classifications
+      if (item.descricao && item.tipo && item.tipo !== 'Outros') {
+        learnItemClassification(item.descricao, item.tipo, item.produto || 'Outros', item.detalhe);
+      }
+
       return { ...item, id: itemId };
     });
     localStorage.setItem(STORAGE_KEY_ITEMS, JSON.stringify(uniqueItems));
@@ -138,15 +223,57 @@ export function getStoredReceipts(): NFCeReceipt[] {
           }
           seenItemIds.add(itemId);
 
-          // Preserve the item's num exactly as saved by the user
-          const num = item.num !== undefined && item.num !== null && !isNaN(Number(item.num))
-            ? Number(item.num)
-            : idx + 1;
+          // Number strictly 1..N within this receipt
+          const num = idx + 1;
+          if (item.num !== num) {
+            hasChanged = true;
+          }
+
+          let tipo = normalizeTipo(item.tipo);
+          let produto = normalizeProduto(item.produto, tipo);
+          let detalhe = item.detalhe?.trim() || 'Outros';
+
+          // Check if item.tipo originally contained a subcategory
+          if (produto === 'Outros') {
+            const tryProd = normalizeProduto(item.tipo, tipo);
+            if (tryProd !== 'Outros') {
+              produto = tryProd;
+              hasChanged = true;
+            }
+          }
+
+          if (tipo === 'Outros' || produto === 'Outros') {
+            const autoClass = classifyProduct(item.descricao);
+            if (autoClass.tipo !== 'Outros') {
+              if (tipo === 'Outros') tipo = autoClass.tipo as any;
+              if (produto === 'Outros') produto = autoClass.produto;
+              if (!detalhe || detalhe === 'Outros') detalhe = autoClass.detalhe;
+              hasChanged = true;
+            }
+          }
+
+          if (!detalhe || detalhe === 'Outros') {
+            const autoClass = classifyProduct(item.descricao);
+            if (autoClass.detalhe && autoClass.detalhe !== 'Outros') {
+              detalhe = autoClass.detalhe;
+              hasChanged = true;
+            }
+          }
+
+          if (item.tipo !== tipo) {
+            hasChanged = true;
+          }
+          if (item.produto !== produto) {
+            hasChanged = true;
+          }
 
           return {
             ...item,
             id: itemId,
             num,
+            tipo,
+            produto,
+            detalhe,
             receiptId: item.receiptId || rcptId,
             razaoSocial: itemRazao,
             data: item.data || receiptData
@@ -186,7 +313,7 @@ export function addReceiptAndItems(receipt: NFCeReceipt): { items: NFCeItem[]; r
   const receiptData = receipt.data && receipt.data.trim() ? receipt.data.trim() : new Date().toLocaleString('pt-BR');
   const receiptId = receipt.id || generateUniqueId('rcpt');
 
-  const sanitizedItems = receipt.itens.map(item => {
+  const sanitizedItems = receipt.itens.map((item, idx) => {
     let itemRazao = item.razaoSocial && item.razaoSocial.trim() ? item.razaoSocial.trim() : receiptRazao;
     if (itemRazao === 'Estabelecimento Comercial' || itemRazao === 'Estabelecimento Sefaz SP') {
       itemRazao = receiptRazao;
@@ -202,6 +329,7 @@ export function addReceiptAndItems(receipt: NFCeReceipt): { items: NFCeItem[]; r
     return {
       ...item,
       id: generateUniqueId('item'),
+      num: idx + 1,
       receiptId,
       pesoKg: itemPeso,
       precoPorKg: itemPrecoKg,
@@ -219,7 +347,7 @@ export function addReceiptAndItems(receipt: NFCeReceipt): { items: NFCeItem[]; r
   };
 
   const updatedReceipts = [sanitizedReceipt, ...currentReceipts.filter(r => r.id !== receiptId)];
-  const updatedItems = [...sanitizedItems, ...currentItems];
+  const updatedItems = normalizeItemsNumbering([...sanitizedItems, ...currentItems]);
 
   saveStoredReceipts(updatedReceipts);
   saveStoredItems(updatedItems);
@@ -285,20 +413,57 @@ export function addStoredItem(newItem: NFCeItem): NFCeItem[] {
 
 export function updateStoredItem(updatedItem: NFCeItem): NFCeItem[] {
   const items = getStoredItems();
-  const index = items.findIndex(i => 
-    (updatedItem.id && i.id === updatedItem.id) || 
-    (i.descricao === updatedItem.descricao && i.data === updatedItem.data && Math.abs((i.valorTotal || 0) - (updatedItem.valorTotal || 0)) < 0.01) ||
-    (i.descricao === updatedItem.descricao && i.data === updatedItem.data)
-  );
+  
+  // Robust matching to find the exact item being edited
+  const targetId = updatedItem.id ? String(updatedItem.id).trim() : '';
+  const targetReceiptId = updatedItem.receiptId ? String(updatedItem.receiptId).trim() : '';
+  const targetNum = updatedItem.num !== undefined && updatedItem.num !== null ? Number(updatedItem.num) : null;
+  const targetDesc = (updatedItem.descricao || '').trim().toLowerCase();
+  const targetVal = Number(updatedItem.valorTotal || 0);
 
-  const exactNum = updatedItem.num !== undefined && updatedItem.num !== null && !isNaN(Number(updatedItem.num))
-    ? Number(updatedItem.num)
+  let index = -1;
+
+  // 1. Match by exact ID
+  if (targetId) {
+    index = items.findIndex(i => i.id && String(i.id).trim() === targetId);
+  }
+
+  // 2. Match by Receipt ID + Item Num
+  if (index === -1 && targetReceiptId && targetNum !== null) {
+    index = items.findIndex(i => 
+      i.receiptId && String(i.receiptId).trim() === targetReceiptId && Number(i.num) === targetNum
+    );
+  }
+
+  // 3. Match by Description + Data + Value
+  if (index === -1 && targetDesc) {
+    index = items.findIndex(i => 
+      (i.descricao || '').trim().toLowerCase() === targetDesc &&
+      i.data === updatedItem.data &&
+      Math.abs((Number(i.valorTotal) || 0) - targetVal) < 0.05
+    );
+  }
+
+  // 4. Match by Description + Data
+  if (index === -1 && targetDesc) {
+    index = items.findIndex(i => 
+      (i.descricao || '').trim().toLowerCase() === targetDesc &&
+      i.data === updatedItem.data
+    );
+  }
+
+  const exactNum = targetNum !== null && !isNaN(targetNum)
+    ? targetNum
     : (index !== -1 ? items[index].num : 1);
 
   const finalItem: NFCeItem = {
     ...(index !== -1 ? items[index] : {}),
     ...updatedItem,
+    id: (index !== -1 && items[index].id) ? items[index].id : (updatedItem.id || generateUniqueId('item')),
     num: exactNum,
+    tipo: getItemTipo(updatedItem.tipo),
+    produto: (updatedItem.produto || 'Outros').trim(),
+    detalhe: (updatedItem.detalhe || 'Outros').trim(),
   };
 
   if (index !== -1) {
@@ -313,8 +478,9 @@ export function updateStoredItem(updatedItem: NFCeItem): NFCeItem[] {
   let receiptsChanged = false;
   const updatedReceipts = currentReceipts.map(rcpt => {
     const itemIndexInRcpt = (rcpt.itens || []).findIndex(it =>
-      (updatedItem.id && it.id === updatedItem.id) ||
-      (it.descricao === updatedItem.descricao && (it.data === updatedItem.data || rcpt.data === updatedItem.data))
+      (finalItem.id && it.id === finalItem.id) ||
+      (targetReceiptId && rcpt.id === targetReceiptId && Number(it.num) === exactNum) ||
+      ((it.descricao || '').trim().toLowerCase() === targetDesc && (it.data === updatedItem.data || rcpt.data === updatedItem.data))
     );
 
     if (itemIndexInRcpt !== -1) {
@@ -381,13 +547,9 @@ export function deleteStoredItem(itemIdOrItem: string | NFCeItem): NFCeItem[] {
     updatedItems.splice(indexToRemove, 1);
   }
 
-  // Renumber remaining items sequentially
-  const renumbered = updatedItems.map((item, idx) => ({
-    ...item,
-    num: idx + 1
-  }));
-
-  saveStoredItems(renumbered);
+  // Renumber remaining items strictly per-NF (1..N within each receipt)
+  const normalized = normalizeItemsNumbering(updatedItems);
+  saveStoredItems(normalized);
 
   // Also remove from stored receipts and recalculate receipt totals
   const currentReceipts = getStoredReceipts();
@@ -426,7 +588,7 @@ export function deleteStoredItem(itemIdOrItem: string | NFCeItem): NFCeItem[] {
     .filter(rcpt => rcpt.itens.length > 0);
 
   saveStoredReceipts(updatedReceipts);
-  return renumbered;
+  return normalized;
 }
 
 export function clearAllStorage(): void {
@@ -693,6 +855,37 @@ export function importBackupData(rawContent: string, mode: 'merge' | 'replace' =
   }
 }
 
+export function importBackupMatrix(
+  rows: (string | number | null | undefined)[][],
+  mode: 'merge' | 'replace' = 'merge'
+): { success: boolean; items: NFCeItem[]; receipts: NFCeReceipt[]; error?: string; newItemsCount?: number } {
+  if (!rows || rows.length === 0) {
+    return { success: false, items: [], receipts: [], error: 'A planilha selecionada está vazia.' };
+  }
+
+  const currentItems = mode === 'merge' ? getStoredItems() : [];
+  const currentReceipts = mode === 'merge' ? getStoredReceipts() : [];
+
+  const matrixResult = parseMatrixData(rows, currentItems, currentReceipts);
+  if (matrixResult.success && matrixResult.items.length > 0) {
+    saveStoredItems(matrixResult.items);
+    saveStoredReceipts(matrixResult.receipts);
+    return {
+      success: true,
+      items: getStoredItems(),
+      receipts: getStoredReceipts(),
+      newItemsCount: matrixResult.newItemsCount
+    };
+  }
+
+  return {
+    success: false,
+    items: currentItems,
+    receipts: currentReceipts,
+    error: matrixResult.error || 'Erro ao processar a planilha Excel.'
+  };
+}
+
 /**
  * Updates the 'conferido' status of a receipt ('Sim' or '-')
  */
@@ -855,13 +1048,20 @@ export function reconcileReceiptsWithItems(receipts: NFCeReceipt[], items: NFCeI
     receiptMap.set(newRcpt.id, newRcpt);
   });
 
-  // Filter out any receipts that have 0 active items, and compute the EXACT total from active items
+  // Filter out any receipts that have 0 active items, and compute the EXACT total from active items with strict 1..N numbering
   const finalReceipts = Array.from(receiptMap.values())
     .filter(rcpt => rcpt.itens && rcpt.itens.length > 0)
     .map(rcpt => {
-      const computedTotal = rcpt.itens.reduce((acc, it) => acc + (it.valorTotal || 0), 0);
+      const sortedItens = [...rcpt.itens].sort((a, b) => {
+        const numA = (typeof a.num === 'number' && !isNaN(a.num) && a.num > 0) ? a.num : 999999;
+        const numB = (typeof b.num === 'number' && !isNaN(b.num) && b.num > 0) ? b.num : 999999;
+        return numA - numB;
+      });
+      const renumberedItens = sortedItens.map((it, idx) => ({ ...it, num: idx + 1 }));
+      const computedTotal = renumberedItens.reduce((acc, it) => acc + (it.valorTotal || 0), 0);
       return {
         ...rcpt,
+        itens: renumberedItens,
         valorTotal: Math.round(computedTotal * 100) / 100
       };
     })

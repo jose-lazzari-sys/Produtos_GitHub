@@ -25,7 +25,7 @@ import {
   downloadFile,
   copyToClipboard
 } from '../utils/exporter';
-import { downloadBackupJSON, importBackupData } from '../utils/storage';
+import { downloadBackupJSON, importBackupData, importBackupMatrix } from '../utils/storage';
 import { formatBRL } from '../utils/nfceParser';
 
 interface AppActionsTabProps {
@@ -45,7 +45,8 @@ export const AppActionsTab: React.FC<AppActionsTabProps> = ({
   const [isProcedureModalOpen, setIsProcedureModalOpen] = useState(false);
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const jsonFileInputRef = useRef<HTMLInputElement>(null);
+  const csvFileInputRef = useRef<HTMLInputElement>(null);
 
   // Total statistics
   const totalGasto = items.reduce((sum, it) => sum + (it.valorTotal || 0), 0);
@@ -137,8 +138,8 @@ export const AppActionsTab: React.FC<AppActionsTabProps> = ({
     }
   };
 
-  // 4. Import JSON Backup
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // 4. Load JSON Backup (Offline)
+  const handleJsonFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -151,8 +152,8 @@ export const AppActionsTab: React.FC<AppActionsTabProps> = ({
       if (result.success) {
         onRestoreBackup(result.items, result.receipts);
         const addedMsg = result.newItemsCount !== undefined && result.newItemsCount > 0
-          ? `✓ ${result.newItemsCount} novos itens adicionados com sucesso! O aplicativo agora contém um total de ${result.items.length} itens em ${result.receipts.length} recibos.`
-          : `✓ Dados sincronizados com sucesso! Total de ${result.items.length} itens e ${result.receipts.length} recibos carregados.`;
+          ? `✓ Backup JSON restaurado com sucesso! ${result.newItemsCount} novos itens adicionados. O aplicativo agora contém ${result.items.length} itens em ${result.receipts.length} recibos.`
+          : `✓ Backup JSON restaurado com sucesso! Total de ${result.items.length} itens e ${result.receipts.length} recibos carregados.`;
         setNotice({
           type: 'success',
           text: addedMsg
@@ -161,7 +162,7 @@ export const AppActionsTab: React.FC<AppActionsTabProps> = ({
       } else {
         setNotice({
           type: 'error',
-          text: result.error || 'Erro ao processar o arquivo de backup.'
+          text: result.error || 'Erro ao processar o arquivo de backup JSON.'
         });
         setTimeout(() => setNotice(null), 7000);
       }
@@ -170,12 +171,90 @@ export const AppActionsTab: React.FC<AppActionsTabProps> = ({
     reader.onerror = () => {
       setNotice({
         type: 'error',
-        text: 'Erro ao ler o arquivo selecionado no seu dispositivo.'
+        text: 'Erro ao ler o arquivo JSON selecionado no seu dispositivo.'
       });
       setTimeout(() => setNotice(null), 6000);
     };
 
     reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  // 5. Import CSV / TXT / Excel Spreadsheet
+  const handleCsvFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
+        const XLSX = await import('xlsx');
+        const buffer = await file.arrayBuffer();
+        const wb = XLSX.read(buffer, { type: 'array' });
+        const allRows: (string | number | null | undefined)[][] = [];
+        for (const sheetName of wb.SheetNames) {
+          const sheet = wb.Sheets[sheetName];
+          if (sheet) {
+            const sheetRows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: '' }) as (string | number)[][];
+            if (sheetRows && sheetRows.length > 0) {
+              allRows.push(...sheetRows);
+            }
+          }
+        }
+        const result = importBackupMatrix(allRows, 'merge');
+        if (result.success) {
+          onRestoreBackup(result.items, result.receipts);
+          const addedMsg = result.newItemsCount !== undefined && result.newItemsCount > 0
+            ? `✓ Planilha Excel importada com sucesso! ${result.newItemsCount} novos itens adicionados. Total: ${result.items.length} itens.`
+            : `✓ Planilha Excel carregada com sucesso! Total: ${result.items.length} itens.`;
+          setNotice({
+            type: 'success',
+            text: addedMsg
+          });
+          setTimeout(() => setNotice(null), 7000);
+        } else {
+          setNotice({
+            type: 'error',
+            text: result.error || 'Erro ao processar a planilha Excel.'
+          });
+          setTimeout(() => setNotice(null), 7000);
+        }
+      } else {
+        let content = await file.text();
+        if (content.includes('\ufffd')) {
+          const reader = new FileReader();
+          content = await new Promise((resolve) => {
+            reader.onload = (event) => resolve((event.target?.result as string) || '');
+            reader.readAsText(file, 'ISO-8859-1');
+          });
+        }
+
+        const result = importBackupData(content, 'merge');
+        if (result.success) {
+          onRestoreBackup(result.items, result.receipts);
+          const addedMsg = result.newItemsCount !== undefined && result.newItemsCount > 0
+            ? `✓ Planilha importada com sucesso! ${result.newItemsCount} novos itens adicionados. Total: ${result.items.length} itens.`
+            : `✓ Planilha carregada com sucesso! Total: ${result.items.length} itens.`;
+          setNotice({
+            type: 'success',
+            text: addedMsg
+          });
+          setTimeout(() => setNotice(null), 7000);
+        } else {
+          setNotice({
+            type: 'error',
+            text: result.error || 'Erro ao processar a planilha CSV/Excel.'
+          });
+          setTimeout(() => setNotice(null), 7000);
+        }
+      }
+    } catch (err: any) {
+      setNotice({
+        type: 'error',
+        text: 'Erro ao ler o arquivo selecionado: ' + (err?.message || '')
+      });
+      setTimeout(() => setNotice(null), 6000);
+    }
+
     e.target.value = '';
   };
 
@@ -306,18 +385,30 @@ export const AppActionsTab: React.FC<AppActionsTabProps> = ({
               )}
             </button>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {/* Baixar CSV */}
               <button
                 id="action-download-csv-btn"
                 type="button"
                 onClick={handleDownloadCSV}
                 disabled={items.length === 0}
-                className="py-3 px-4 rounded-2xl border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs sm:text-sm font-semibold transition-colors flex items-center justify-center gap-2 min-h-[44px] cursor-pointer disabled:opacity-50"
+                className="py-3 px-3 rounded-2xl border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 min-h-[44px] cursor-pointer disabled:opacity-50"
                 title="Baixar arquivo CSV compatível com Planilhas"
               >
                 <Download className="w-4 h-4 text-slate-500" />
                 <span>Baixar CSV</span>
+              </button>
+
+              {/* Importar Planilha CSV / Excel */}
+              <button
+                id="action-import-csv-btn"
+                type="button"
+                onClick={() => csvFileInputRef.current?.click()}
+                className="py-3 px-3 rounded-2xl border border-emerald-500/40 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 min-h-[44px] cursor-pointer"
+                title="Importar planilha de compras Excel (.xlsx) ou CSV"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                <span>Importar CSV / Excel</span>
               </button>
 
               {/* Abrir Google Planilhas */}
@@ -326,12 +417,21 @@ export const AppActionsTab: React.FC<AppActionsTabProps> = ({
                 href="https://sheets.new"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="py-3 px-4 rounded-2xl bg-slate-900 hover:bg-black dark:bg-slate-100 dark:hover:bg-white text-white dark:text-slate-900 text-xs sm:text-sm font-bold shadow-xs transition-colors flex items-center justify-center gap-2 min-h-[44px]"
+                className="py-3 px-3 rounded-2xl bg-slate-900 hover:bg-black dark:bg-slate-100 dark:hover:bg-white text-white dark:text-slate-900 text-xs font-bold shadow-xs transition-colors flex items-center justify-center gap-1.5 min-h-[44px]"
               >
-                <span>Abrir Google Planilhas</span>
-                <ExternalLink className="w-4 h-4" />
+                <span>Abrir Planilha</span>
+                <ExternalLink className="w-3.5 h-3.5" />
               </a>
             </div>
+
+            {/* Hidden Input for CSV & Excel */}
+            <input
+              ref={csvFileInputRef}
+              type="file"
+              accept=".csv,.xlsx,.xls,.tsv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/plain"
+              onChange={handleCsvFileChange}
+              className="hidden"
+            />
           </div>
         </div>
 
@@ -372,7 +472,7 @@ export const AppActionsTab: React.FC<AppActionsTabProps> = ({
                 Segurança dos seus Dados:
               </p>
               <p className="text-[11px] leading-relaxed text-slate-600 dark:text-slate-400">
-                Gere um arquivo JSON com todas as notas fiscais e itens cadastrados para guardar no seu computador ou transferir para outro aparelho.
+                Gere um arquivo JSON com todas as notas fiscais e itens cadastrados para guardar no seu computador ou transferir para a versão offline em outro aparelho.
               </p>
             </div>
           </div>
@@ -392,25 +492,25 @@ export const AppActionsTab: React.FC<AppActionsTabProps> = ({
                 <span>Fazer Backup (JSON)</span>
               </button>
 
-              {/* Restaurar Backup / CSV */}
+              {/* Carregar JSON para a Versão Offline */}
               <button
-                id="action-import-backup-btn"
+                id="action-import-json-backup-btn"
                 type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="py-3.5 px-4 rounded-2xl border-2 border-indigo-500/30 dark:border-indigo-500/40 hover:bg-indigo-50 dark:hover:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-bold text-xs sm:text-sm transition-colors flex items-center justify-center gap-2 min-h-[48px] cursor-pointer"
-                title="Importar planilha CSV / TXT ou restaurar backup JSON"
+                onClick={() => jsonFileInputRef.current?.click()}
+                className="py-3.5 px-4 rounded-2xl border-2 border-indigo-500/40 dark:border-indigo-500/50 hover:bg-indigo-50 dark:hover:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-bold text-xs sm:text-sm transition-colors flex items-center justify-center gap-2 min-h-[48px] cursor-pointer shadow-xs"
+                title="Carregar arquivo JSON de backup para o aplicativo offline"
               >
                 <FileUp className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
-                <span>Importar CSV / Backup</span>
+                <span>Carregar JSON (Offline)</span>
               </button>
             </div>
 
-            {/* Hidden File Input for CSV / TSV / JSON */}
+            {/* Hidden File Input for JSON */}
             <input
-              ref={fileInputRef}
+              ref={jsonFileInputRef}
               type="file"
-              accept=".csv,.tsv,.txt,.json,text/csv,text/plain,application/json"
-              onChange={handleFileChange}
+              accept=".json,application/json"
+              onChange={handleJsonFileChange}
               className="hidden"
             />
           </div>

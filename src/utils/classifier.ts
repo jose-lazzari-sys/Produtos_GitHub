@@ -1,250 +1,29 @@
 import { CategoryRule } from '../types';
 
 export const CATEGORY_RULES: CategoryRule[] = [
-  // 1. Alimentação - açougue/Peixaria
-  {
-    tipo: 'Alimentação',
-    produto: 'açougue/peixaria',
-    detalhe: 'carne, peixe, linguiça',
-    keywords: [
-      'carne', 'peixe', 'linguiça', 'linguica', 'bovino', 'suino', 'suíno', 'frango', 'ave',
-      'alcatra', 'picanha', 'contra file', 'contrafile', 'costela', 'acem', 'patinho',
-      'maminha', 'coxao', 'coxão', 'bisteca', 'lombo', 'pernil', 'bacon', 'calabresa',
-      'tilapia', 'tilápia', 'salmao', 'salmão', 'sardinha', 'camarao', 'camarão', 'bacalhau',
-      'pescada', 'merluza', 'atum fresco', 'salsicha', 'hamburguer', 'hambúrguer', 'nugget',
-      'coxa', 'sobrecoxa', 'peito frango', 'filezinho', 'sassami', 'moida', 'moída',
-      'figado', 'fígado', 'coracao', 'coração'
-    ]
-  },
-  // 2. Alimentação - bebidas
-  {
-    tipo: 'Alimentação',
-    produto: 'bebidas',
-    detalhe: 'suco, vinho, refrigerante, cerveja, chá, leite',
-    keywords: [
-      'suco', 'vinho', 'refrigerante', 'cerveja', 'chá', 'cha', 'leite',
-      'nectar', 'néctar', 'refri', 'coca cola', 'coca-cola', 'coca', 'guarana', 'guaraná',
-      'fanta', 'sprite', 'pepsi', 'schweppes', 'heineken', 'amstel', 'stella', 'skol',
-      'brahma', 'budweiser', 'corona', 'bohemia', 'espumante', 'vodka', 'gin', 'whisky',
-      'cachaça', 'cachaca', 'rum', 'licor', 'agua mineral', 'água mineral', 'agua c/ gas',
-      'agua sem gas', 'agua tonica', 'água tônica', 'energetico', 'energético', 'red bull',
-      'monster', 'gatorade', 'powerade', 'isotônico', 'isotonico', 'leite uht', 'leite integral',
-      'leite desnatado', 'leite semi', 'leite cond', 'achocolatado pronto', 'toddynho'
-    ]
-  },
-  // 3. Alimentação - hortifrúti
-  {
-    tipo: 'Alimentação',
-    produto: 'hortifrúti',
-    detalhe: 'fruta, verdura, legume, alho, batata',
-    keywords: [
-      'fruta', 'verdura', 'legume', 'alho', 'batata', 'tomate', 'cebola', 'cenoura',
-      'banana', 'maca', 'maçã', 'laranja', 'limao', 'limão', 'alface', 'couve',
-      'brocolis', 'brócolis', 'abobora', 'abóbora', 'abobrinha', 'berinjela',
-      'mandioca', 'aipim', 'beterraba', 'melancia', 'melao', 'melão', 'uva', 'manga',
-      'mamao', 'mamão', 'abacaxi', 'pera', 'pêra', 'morango', 'kiwi', 'maracuja', 'maracujá',
-      'salsa', 'cebolinha', 'cheiro verde', 'coentro', 'rucula', 'rúcula', 'espinafre',
-      'pimentao', 'pimentão', 'repolho', 'chuchu', 'pepino', 'vagem', 'quiabo', 'jilo', 'jiló',
-      'mandioca', 'inhame', 'batata doce', 'hortifru', 'legumes'
-    ]
-  },
-  // 4. Alimentação - laticínios e frios
-  {
-    tipo: 'Alimentação',
-    produto: 'laticínios e frios',
-    detalhe: 'queijo, presunto, queijo ralado, requeijão, leite em pó, manteiga, margarina',
-    keywords: [
-      'queijo', 'presunto', 'queijo ralado', 'requeijao', 'requeijão', 'leite em po', 'leite em pó',
-      'manteiga', 'margarina', 'mussarela', 'mozarela', 'prato', 'provolone', 'parmesao',
-      'parmesão', 'gorgonzola', 'minas frescal', 'minas padrao', 'ricota', 'brie', 'cheddar',
-      'mortadela', 'peito de peru', 'salame', 'copa', 'iogurte', 'yogurte', 'iog', 'danone',
-      'yakult', 'nata', 'coalhada', 'creme de leite', 'leite condensado', 'chantilly',
-      'leite de coco'
-    ]
-  },
-  // 5. Alimentação - mercearia
-  {
-    tipo: 'Alimentação',
-    produto: 'mercearia',
-    detalhe: 'secos, molhados, entalado, tempero',
-    keywords: [
-      'secos', 'molhados', 'entalado', 'enlatado', 'tempero', 'arroz', 'feijao', 'feijão',
-      'macarrao', 'macarrão', 'massa', 'espaguete', 'penne', 'parafuso', 'oleo', 'óleo',
-      'oleo soja', 'azeite', 'acucar', 'açúcar', 'sal refinado', 'sal grosso', 'cafe', 'café',
-      'cafe moido', 'cafe soluvel', 'farinha', 'trigo', 'fubá', 'fuba', 'aveia', 'maionese',
-      'ketchup', 'mostarda', 'molho', 'molho tomate', 'extrato tomate', 'polpa tomate',
-      'ervilha', 'milho verde', 'sardinha lata', 'atum lata', 'palmito', 'azeitona',
-      'caldo knorr', 'caldo maggi', 'sazon', 'pimenta', 'oregano', 'orégano', 'vinagre',
-      'fermento', 'achocolatado po', 'nescau', 'toddy', 'cereal', 'granola', 'amido', 'maisena',
-      'gelatina', 'mistura bolo', 'lentilha', 'grao de bico', 'grão de bico', 'canjica',
-      'polvilho', 'tapioca'
-    ]
-  },
-  // 6. Alimentação - padaria
-  {
-    tipo: 'Alimentação',
-    produto: 'padaria',
-    detalhe: 'pão, pão de queijo, rosca, bolacha, biscoito, salgadinho',
-    keywords: [
-      'pao', 'pão', 'pao de queijo', 'pão de queijo', 'rosca', 'bolacha', 'biscoito',
-      'salgadinho', 'pao frances', 'pão francês', 'pao de forma', 'pao forma', 'torrada',
-      'bolo', 'croissant', 'brioche', 'broa', 'sonho', 'torta doce', 'cookie', 'wafer',
-      'recheado', 'passatempo', 'trakinas', 'oreo', 'club social', 'pit stop', 'cream cracker',
-      'maisena biscoito', 'ruffles', 'doritos', 'cheetos', 'fandangos', 'batata palha',
-      'salgado', 'coxinha', 'esfirra', 'kibe', 'pastel', 'empada'
-    ]
-  },
-  // 7. Higiene Pessoal - bucal
-  {
-    tipo: 'Higiene Pessoal',
-    produto: 'bucal',
-    detalhe: 'creme dental, escova de dente, enxaguante bucal e fio dental',
-    keywords: [
-      'creme dental', 'escova de dente', 'escova dental', 'enxaguante bucal', 'enxaguatorio',
-      'enxaguatório', 'fio dental', 'fita dental', 'pasta de dente', 'pasta dental',
-      'colgate', 'oral b', 'oral-b', 'sensodyne', 'sorriso', 'close up', 'listerine',
-      'plax', 'cepacol', 'fixador dentadura', 'corega'
-    ]
-  },
-  // 8. Higiene Pessoal - capilar
-  {
-    tipo: 'Higiene Pessoal',
-    produto: 'capilar',
-    detalhe: 'shampoo, condicionador, creme para cabelo, pente, escova de cabelo',
-    keywords: [
-      'shampoo', 'xampu', 'condicionador', 'creme para cabelo', 'creme capilar',
-      'pente', 'escova de cabelo', 'mascara capilar', 'máscara capilar', 'masc cap',
-      'leave in', 'leave-in', 'tintura cabelo', 'tonalizante', 'gel fixador', 'gel cabelo',
-      'pomada cabelo', 'reparador pontas', 'oleo capilar', 'seda', 'pantene', 'elseve',
-      'head shoulders', 'tresemme', 'salon line'
-    ]
-  },
-  // 9. Higiene Pessoal - corporal
-  {
-    tipo: 'Higiene Pessoal',
-    produto: 'corporal',
-    detalhe: 'desodorante, cotonete, sabonete, hidratante, óleos',
-    keywords: [
-      'desodorante', 'cotonete', 'hastes flexiveis', 'hastes flexíveis', 'sabonete',
-      'sabonete barra', 'hidratante corporal', 'oleos', 'óleos', 'oleo corporal',
-      'talco', 'esponja banho', 'rexona', 'dove sabonete', 'dove desod', 'nivea hidratante',
-      'protex', 'lux', 'palmolive', 'giovanna baby', 'antitranspirante', 'roll on',
-      'aerossol corpo', 'sabonete nivea'
-    ]
-  },
-  // 10. Higiene Pessoal - íntima e papéis
-  {
-    tipo: 'Higiene Pessoal',
-    produto: 'íntima e papéis',
-    detalhe: 'absorventes, hidratante, protetor solar, sabonete íntimo, papel higiênico, lenço de papel, lenço umedecido',
-    keywords: [
-      'absorventes', 'absorvente', 'protetor diario', 'protetor diário', 'sabonete intimo',
-      'sabonete íntimo', 'papel higienico', 'papel higiênico', 'lenco de papel', 'lenço de papel',
-      'lenco umedecido', 'lenço umedecido', 'lencos umedecidos', 'toalha umedecida',
-      'papel hig', 'sempre livre', 'intimus', 'kotex', 'neve papel', 'sublime',
-      'personal papel', 'preservativo', 'camisinha', 'fralda'
-    ]
-  },
-  // 11. Higiene Pessoal - mãos/pés
-  {
-    tipo: 'Higiene Pessoal',
-    produto: 'mãos/pés',
-    detalhe: 'creme p/ mãos, creme p/ pés, sabonete líquido, álcool em gel',
-    keywords: [
-      'creme p/ maos', 'creme para maos', 'creme p/ mãos', 'creme para mãos',
-      'creme p/ pes', 'creme para pes', 'creme p/ pés', 'creme para pés',
-      'sabonete liquido', 'sabonete líquido', 'alcool em gel', 'álcool em gel',
-      'gel antisseptico', 'gel antisséptico', 'lixa unha', 'lixa pe', 'cortador unha',
-      'alicate cuticula', 'esmalte', 'removedor esmalte', 'acetona', 'algodao', 'algodão'
-    ]
-  },
-  // 12. Higiene Pessoal - pele/barbear
-  {
-    tipo: 'Higiene Pessoal',
-    produto: 'pele/barbear',
-    detalhe: 'protetores solares, limpadores faciais, barbeador',
-    keywords: [
-      'protetores solares', 'protetor solar', 'limpadores faciais', 'barbeador',
-      'gillette', 'prestobarba', 'aparelho barbear', 'aparelho de barbear', 'lamina barbear',
-      'lâmina barbear', 'espuma barbear', 'espuma de barbear', 'gel barbear',
-      'pos barba', 'pós barba', 'agua micelar', 'água micelar', 'sabonete facial',
-      'esfoliante facial', 'protetor facial', 'sundown', 'neutrogena facial', 'loreal solar'
-    ]
-  },
-  // 13. Limpeza Doméstica - descartáveis
-  {
-    tipo: 'Limpeza Doméstica',
-    produto: 'descartáveis',
-    detalhe: 'papel filme, papel toalha, filtro café, papel alumínio, guardanapos, pratinhos, copo, luvas',
-    keywords: [
-      'papel filme', 'filme pvc', 'papel toalha', 'filtro cafe', 'filtro café',
-      'filtro de cafe', 'coador cafe', 'papel aluminio', 'papel alumínio', 'folha aluminio',
-      'guardanapos', 'guardanapo', 'pratinhos', 'prato descartavel', 'copo descartavel',
-      'copos descartaveis', 'luvas descartaveis', 'luva latex', 'luva vinil', 'canudo',
-      'palito dente', 'palito de dente', 'forminha', 'marmitex', 'saco freezer', 'saco zip'
-    ]
-  },
-  // 14. Limpeza Doméstica - acessórios
-  {
-    tipo: 'Limpeza Doméstica',
-    produto: 'acessórios',
-    detalhe: 'esponja, pano de limpeza, saco de lixo, escova limpeza',
-    keywords: [
-      'esponja', 'esponja dupla', 'esponja aco', 'esponja de aço', 'bombril', 'assolan',
-      'pano de limpeza', 'pano limpeza', 'pano microfibra', 'pano prato', 'pano de chao',
-      'pano de chão', 'perfex', 'saco de lixo', 'saco lixo', 'escova limpeza', 'escova vaso',
-      'vassoura', 'rodo', 'balde', 'pa de lixo', 'pá de lixo', 'pregador roupa', 'varal',
-      'mop', 'luva limpeza'
-    ]
-  },
-  // 15. Limpeza Doméstica - desinfetantes
-  {
-    tipo: 'Limpeza Doméstica',
-    produto: 'desinfetantes',
-    detalhe: 'água sanitária, desinfetante, alcool, removedor',
-    keywords: [
-      'agua sanitaria', 'água sanitária', 'desinfetante', 'alcool', 'álcool',
-      'alcool 70', 'álcool 70', 'removedor', 'cloro', 'candida', 'cândida', 'kiboa',
-      'pinho sol', 'pinhosol', 'lisoform', 'lysoform', 'desinfetante veja', 'querosene',
-      'sanitizante', 'agua sanit'
-    ]
-  },
-  // 16. Limpeza Doméstica - detergentes
-  {
-    tipo: 'Limpeza Doméstica',
-    produto: 'detergentes',
-    detalhe: 'lava louça, limpa alumínio, detergente, limpa móveis',
-    keywords: [
-      'lava louca', 'lava louça', 'limpa aluminio', 'limpa alumínio', 'detergente',
-      'detergente liquido', 'limpa moveis', 'limpa móveis', 'lustra moveis',
-      'veja multiuso', 'veja', 'saponaceo', 'saponáceo', 'cif', 'limpa vidro',
-      'limpa forno', 'desengordurante', 'multiuso', 'pastilha lava louca', 'secar lava louca'
-    ]
-  },
-  // 17. Limpeza Doméstica - inseticidas
-  {
-    tipo: 'Limpeza Doméstica',
-    produto: 'inseticidas',
-    detalhe: 'aerosol, iscas, raticidas, veneno insetos',
-    keywords: [
-      'inseticida', 'aerosol insetos', 'aerossol insetos', 'iscas', 'iscas barata',
-      'iscas formiga', 'raticidas', 'raticida', 'veneno insetos', 'veneno barata',
-      'raid', 'baygon', 'sbp', 'mata barata', 'mata mosquito', 'repelente inseto',
-      'pastilha pernilongo', 'veneno rato'
-    ]
-  },
-  // 18. Limpeza Doméstica - lava roupas
-  {
-    tipo: 'Limpeza Doméstica',
-    produto: 'lava roupas',
-    detalhe: 'amaciantes, sabão em pó, sabão líquido, alvejantes',
-    keywords: [
-      'amaciante', 'amaciantes', 'sabao em po', 'sabão em pó', 'sabao liquido',
-      'sabão líquido', 'sabao em barra', 'sabão em barra', 'alvejante', 'alvejantes',
-      'omo', 'ariel', 'confort', 'comfort', 'downy', 'vanish', 'tixan', 'ype amaciante',
-      'brilhante sabao', 'brilhante po', 'tira manchas', 'amaciante concentrado'
-    ]
-  }
+  // 1. Alimentação
+  { tipo: 'Alimentação', produto: 'açougue/peixaria', detalhe: 'carne, peixe, linguiça' },
+  { tipo: 'Alimentação', produto: 'bebidas', detalhe: 'suco, vinho, refrigerante, cerveja, chá, leite' },
+  { tipo: 'Alimentação', produto: 'hortifrúti', detalhe: 'fruta, verdura, legume, alho, batata' },
+  { tipo: 'Alimentação', produto: 'laticínios e frios', detalhe: 'queijo, presunto, queijo ralado, requeijão, leite em pó, manteiga, margarina' },
+  { tipo: 'Alimentação', produto: 'mercearia', detalhe: 'secos, molhados, entalado, tempero' },
+  { tipo: 'Alimentação', produto: 'padaria', detalhe: 'pão, pão de queijo, rosca, bolacha, biscoito, salgadinho' },
+
+  // 2. Higiene Pessoal
+  { tipo: 'Higiene Pessoal', produto: 'bucal', detalhe: 'creme dental, escova de dente, enxaguante bucal e fio dental' },
+  { tipo: 'Higiene Pessoal', produto: 'capilar', detalhe: 'shampoo, condicionador, creme para cabelo, pente, escova de cabelo' },
+  { tipo: 'Higiene Pessoal', produto: 'corporal', detalhe: 'desodorante, cotonete, sabonete, hidratante, óleos' },
+  { tipo: 'Higiene Pessoal', produto: 'íntima e papéis', detalhe: 'absorventes, hidratante, protetor solar, sabonete íntimo, papel higiênico, lenço de papel, lenço umedecido' },
+  { tipo: 'Higiene Pessoal', produto: 'mãos/pés', detalhe: 'creme p/ mãos, creme p/ pés, sabonete líquido, álcool em gel' },
+  { tipo: 'Higiene Pessoal', produto: 'pele/barbear', detalhe: 'protetores solares, limpadores faciais, barbeador' },
+
+  // 3. Limpeza Doméstica
+  { tipo: 'Limpeza Doméstica', produto: 'descartáveis', detalhe: 'papel filme, papel toalha, filtro café, papel alumínio, guardanapos, pratinhos, copo, luvas' },
+  { tipo: 'Limpeza Doméstica', produto: 'acessórios', detalhe: 'esponja, pano de limpeza, saco de lixo, escova limpeza' },
+  { tipo: 'Limpeza Doméstica', produto: 'desinfetantes', detalhe: 'água sanitária, desinfetante, alcool, removedor' },
+  { tipo: 'Limpeza Doméstica', produto: 'detergentes', detalhe: 'lava louça, limpa alumínio, detergente, limpa móveis' },
+  { tipo: 'Limpeza Doméstica', produto: 'inseticidas', detalhe: 'aerosol, iscas, raticidas, veneno insetos' },
+  { tipo: 'Limpeza Doméstica', produto: 'lava roupas', detalhe: 'amaciantes, sabão em pó, sabão líquido, alvejantes' }
 ];
 
 export const TIPO_OPTIONS = [
@@ -255,8 +34,78 @@ export const TIPO_OPTIONS = [
   'Outros'
 ] as const;
 
+export function getDetalheForTipoProduto(tipo?: string, produto?: string): string {
+  if (!tipo || !produto || tipo === 'Outros' || produto === 'Outros') return 'Outros';
+  const normTipo = normalizeTipo(tipo);
+  const normProd = normalizeProduto(produto, normTipo);
+  const rule = CATEGORY_RULES.find(r => r.tipo === normTipo && r.produto === normProd);
+  return rule?.detalhe || 'Outros';
+}
+
+export const VALID_TIPOS: readonly ['Alimentação', 'Higiene Pessoal', 'Limpeza Doméstica'] = [
+  'Alimentação',
+  'Higiene Pessoal',
+  'Limpeza Doméstica'
+] as const;
+
 /**
- * Normalize string by removing accents, lowercase and trimming punctuation
+ * Validates and returns exactly the canonical TIPO:
+ * 1. Checks if rawTipo matches one of the valid options ('Alimentação', 'Higiene Pessoal', 'Limpeza Doméstica')
+ * 2. If YES => returns that valid TIPO.
+ * 3. If NO => returns 'Outros'.
+ */
+export function normalizeTipo(rawTipo: string | undefined | null): 'Alimentação' | 'Higiene Pessoal' | 'Limpeza Doméstica' | 'Outros' {
+  if (!rawTipo) return 'Outros';
+  const clean = normalizeText(rawTipo);
+  if (!clean || clean === 'outros' || clean === 'todos') return 'Outros';
+
+  for (const t of VALID_TIPOS) {
+    if (clean === normalizeText(t)) {
+      return t;
+    }
+  }
+
+  return 'Outros';
+}
+
+/**
+ * Validates and returns exactly the PRODUTO according to the user's hierarchy:
+ * 1. Is the validated tipo === 'Outros'?
+ *    If YES => returns 'Outros'.
+ * 2. If NO => Is rawProduto in the list of products belonging to that validated tipo?
+ *    If YES => returns the exact canonical produto name from CATEGORY_RULES.
+ *    If NO => returns 'Outros'.
+ */
+export function normalizeProduto(rawProd: string | undefined | null, tipo?: string): string {
+  if (!rawProd || !tipo || tipo === 'Outros') return 'Outros';
+  const cleanProd = normalizeText(rawProd);
+  if (!cleanProd || cleanProd === 'outros') return 'Outros';
+
+  // Normalize tipo first to be certain
+  const validTipo = normalizeTipo(tipo);
+  if (validTipo === 'Outros') return 'Outros';
+
+  // Find products allowed strictly for this Tipo
+  const allowedRules = CATEGORY_RULES.filter(r => r.tipo === validTipo);
+  for (const rule of allowedRules) {
+    if (cleanProd === normalizeText(rule.produto)) {
+      return rule.produto;
+    }
+  }
+
+  return 'Outros';
+}
+
+/**
+ * Normalizes and resolves an item's tipo to one of the standard categories.
+ */
+export function getItemTipo(item: { tipo?: string } | string | undefined | null): 'Alimentação' | 'Higiene Pessoal' | 'Limpeza Doméstica' | 'Outros' {
+  const raw = typeof item === 'string' ? item : item?.tipo;
+  return normalizeTipo(raw);
+}
+
+/**
+ * Normalizes string by removing accents, lowercase and trimming punctuation
  */
 export function normalizeText(text: string): string {
   if (!text) return '';
@@ -270,14 +119,146 @@ export function normalizeText(text: string): string {
 }
 
 /**
- * Classifies an item based on its description
+ * Strips common noise tokens (quantities, units, weights, packing codes) to extract core product tokens
  */
-export function classifyProduct(descricao: string): {
+export function extractCoreTokens(text: string): string[] {
+  const norm = normalizeText(text);
+  const words = norm.split(' ');
+  const ignored = new Set([
+    'kg', 'g', 'gr', 'gramas', 'kilo', 'kilos', 'quilo', 'quilos', 'mg',
+    'l', 'lt', 'lts', 'litro', 'litros', 'ml', 'mls',
+    'un', 'und', 'unid', 'unidade', 'unidades', 'pc', 'pct', 'pacote', 'pacotes',
+    'cx', 'cxa', 'caixa', 'caixas', 'dz', 'duzia', 'duzias',
+    'de', 'da', 'do', 'das', 'dos', 'com', 'sem', 'em', 'para', 'por', 'ao', 'na', 'no',
+    'c/', 's/', 'tipo', 'marca', 'ref', 'cod', 'item', 'fc', 'congelado', 'fresco',
+    'sadia', 'perdigao', 'seara', 'friboi', 'aurora', 'qualita', 'taeq', 'dia'
+  ]);
+
+  return words.filter(w => {
+    if (w.length < 2) return false;
+    if (/^\d+$/.test(w)) return false; // purely numbers
+    if (/^\d+[a-z]+$/.test(w)) return false; // e.g. 500g, 1kg, 2l
+    return !ignored.has(w);
+  });
+}
+
+/**
+ * Calculates Dice / Bigram similarity coefficient between two strings (0.0 to 1.0)
+ */
+export function calculateSimilarity(str1: string, str2: string): number {
+  const s1 = normalizeText(str1).replace(/\s+/g, '');
+  const s2 = normalizeText(str2).replace(/\s+/g, '');
+  if (!s1 || !s2) return 0;
+  if (s1 === s2) return 1.0;
+  if (s1.length < 2 || s2.length < 2) return s1 === s2 ? 1.0 : 0;
+
+  const getBigrams = (s: string) => {
+    const bigrams = new Set<string>();
+    for (let i = 0; i < s.length - 1; i++) {
+      bigrams.add(s.substring(i, i + 2));
+    }
+    return bigrams;
+  };
+
+  const b1 = getBigrams(s1);
+  const b2 = getBigrams(s2);
+  let intersection = 0;
+  for (const item of b1) {
+    if (b2.has(item)) intersection++;
+  }
+
+  return (2.0 * intersection) / (b1.size + b2.size);
+}
+
+const LEARNED_MEMORY_KEY = 'nfce_learned_classifications_v1';
+
+export interface LearnedClassification {
+  tipo: string;
+  produto: string;
+  detalhe: string;
+  sourceDesc: string;
+  count: number;
+}
+
+/**
+ * In-memory cache of learned classifications from historical items and user edits
+ */
+let learnedCache: Map<string, LearnedClassification> | null = null;
+
+export function getLearnedMemory(): Map<string, LearnedClassification> {
+  if (learnedCache) return learnedCache;
+
+  learnedCache = new Map<string, LearnedClassification>();
+  try {
+    const raw = localStorage.getItem(LEARNED_MEMORY_KEY);
+    if (raw) {
+      const parsed: Record<string, LearnedClassification> = JSON.parse(raw);
+      Object.entries(parsed).forEach(([key, val]) => {
+        if (val && val.tipo && val.tipo !== 'Outros') {
+          learnedCache!.set(key, val);
+        }
+      });
+    }
+  } catch (e) {
+    console.error('Error loading learned classifications:', e);
+  }
+
+  return learnedCache;
+}
+
+/**
+ * Saves a newly learned or user-edited classification into the intelligent historical memory
+ */
+export function learnItemClassification(
+  descricao: string,
+  tipo: string,
+  produto: string,
+  detalhe?: string
+): void {
+  if (!descricao || !tipo || tipo === 'Outros') return;
+
+  const memory = getLearnedMemory();
+  const normalized = normalizeText(descricao);
+  if (!normalized) return;
+
+  const existing = memory.get(normalized);
+  const count = (existing?.count || 0) + 1;
+
+  memory.set(normalized, {
+    tipo: normalizeTipo(tipo),
+    produto: normalizeProduto(produto, tipo),
+    detalhe: detalhe?.trim() || 'Outros',
+    sourceDesc: descricao.trim(),
+    count
+  });
+
+  // Persist to localStorage
+  try {
+    const obj: Record<string, LearnedClassification> = {};
+    memory.forEach((val, key) => {
+      obj[key] = val;
+    });
+    localStorage.setItem(LEARNED_MEMORY_KEY, JSON.stringify(obj));
+  } catch (e) {
+    console.error('Error saving learned classifications:', e);
+  }
+}
+
+/**
+ * Classifies an item based on:
+ * 1. Exact historical database match (SEFAZ descriptions already learned)
+ * 2. Token overlap and similarity with previously classified SEFAZ descriptions
+ * 3. Fallback semantic heuristics
+ */
+export function classifyProduct(
+  descricao: string,
+  databaseItems?: Array<{ descricao?: string; tipo?: string; produto?: string; detalhe?: string }>
+): {
   tipo: string;
   produto: string;
   detalhe: string;
 } {
-  if (!descricao) {
+  if (!descricao || !descricao.trim()) {
     return {
       tipo: 'Outros',
       produto: 'Outros',
@@ -286,23 +267,77 @@ export function classifyProduct(descricao: string): {
   }
 
   const normalized = normalizeText(descricao);
+  const coreTokens = extractCoreTokens(descricao);
 
-  // Check each rule in sequence
-  for (const rule of CATEGORY_RULES) {
-    for (const keyword of rule.keywords) {
-      const normKeyword = normalizeText(keyword);
-      // Check word boundary or substring match
-      if (normKeyword && normalized.includes(normKeyword)) {
+  // 1. Check exact match in learned memory
+  const memory = getLearnedMemory();
+  if (memory.has(normalized)) {
+    const learned = memory.get(normalized)!;
+    return {
+      tipo: learned.tipo,
+      produto: learned.produto,
+      detalhe: learned.detalhe
+    };
+  }
+
+  // 2. Check if provided databaseItems has an exact or high-confidence match
+  if (databaseItems && databaseItems.length > 0) {
+    for (const item of databaseItems) {
+      if (!item.descricao || !item.tipo || item.tipo === 'Outros') continue;
+      const itemNorm = normalizeText(item.descricao);
+      if (itemNorm === normalized) {
+        // Learn it automatically
+        learnItemClassification(descricao, item.tipo, item.produto || 'Outros', item.detalhe);
         return {
-          tipo: rule.tipo,
-          produto: rule.produto,
-          detalhe: rule.detalhe
+          tipo: normalizeTipo(item.tipo),
+          produto: normalizeProduto(item.produto, item.tipo),
+          detalhe: item.detalhe?.trim() || 'Outros'
         };
       }
     }
   }
 
-  // Fallback to "Outros"
+  // 3. Search learned memory & database for the highest token overlap or string similarity
+  let bestMatch: { tipo: string; produto: string; detalhe: string; score: number } | null = null;
+
+  // Search in memory
+  memory.forEach((val, key) => {
+    if (val.tipo === 'Outros') return;
+
+    // Token subset test: if all core tokens of this description exist in the learned one, or vice-versa
+    const keyTokens = extractCoreTokens(key);
+    const sharedTokens = coreTokens.filter(t => keyTokens.includes(t));
+    
+    let score = 0;
+    if (coreTokens.length > 0 && sharedTokens.length === coreTokens.length) {
+      score = 0.95; // Perfect token subset match
+    } else if (coreTokens.length > 0 && sharedTokens.length > 0) {
+      score = sharedTokens.length / Math.max(coreTokens.length, keyTokens.length);
+    }
+
+    // Also check string bigram similarity
+    const sim = calculateSimilarity(normalized, key);
+    if (sim > score) score = sim;
+
+    if (score >= 0.65 && (!bestMatch || score > bestMatch.score)) {
+      bestMatch = {
+        tipo: val.tipo,
+        produto: val.produto,
+        detalhe: val.detalhe,
+        score
+      };
+    }
+  });
+
+  if (bestMatch && bestMatch.score >= 0.65) {
+    return {
+      tipo: bestMatch.tipo,
+      produto: bestMatch.produto,
+      detalhe: bestMatch.detalhe
+    };
+  }
+
+  // Fallback to "Outros" if not found in historical memory or database
   return {
     tipo: 'Outros',
     produto: 'Outros',

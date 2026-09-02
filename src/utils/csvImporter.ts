@@ -1,6 +1,6 @@
 import { NFCeItem, NFCeReceipt } from '../types';
 import { generateUniqueId, parseDateToTimestamp } from './storage';
-import { classifyProduct } from './classifier';
+import { classifyProduct, normalizeTipo, normalizeProduto, normalizeText, learnItemClassification, getDetalheForTipoProduto, CATEGORY_RULES } from './classifier';
 
 /**
  * Fixes common UTF-8 / ISO-8859-1 mojibake characters in Brazilian Portuguese text
@@ -8,38 +8,19 @@ import { classifyProduct } from './classifier';
 export function fixMojibake(text: string): string {
   if (!text) return '';
   return text
-    .replace(/Descrio/gi, 'Descrição')
-    .replace(/Descri\?+o/gi, 'Descrição')
-    .replace(/Razo/gi, 'Razão')
-    .replace(/Raz\?+o/gi, 'Razão')
-    .replace(/Cdigo/gi, 'Código')
-    .replace(/C\?+digo/gi, 'Código')
-    .replace(/ms/gi, 'mês')
-    .replace(/m\?+s/gi, 'mês')
-    .replace(/Alimentao/gi, 'Alimentação')
-    .replace(/Alimenta\?+o/gi, 'Alimentação')
-    .replace(/aougue/gi, 'Açougue')
-    .replace(/a\?+ougue/gi, 'Açougue')
-    .replace(/laticnios/gi, 'Laticínios')
-    .replace(/latic\?+nios/gi, 'Laticínios')
-    .replace(/hortifrti/gi, 'Hortifrúti')
-    .replace(/hortifr\?+ti/gi, 'Hortifrúti')
-    .replace(/Domstica/gi, 'Doméstica')
-    .replace(/Dom\?+stica/gi, 'Doméstica')
-    .replace(/descartveis/gi, 'Descartáveis')
-    .replace(/descart\?+veis/gi, 'Descartáveis')
-    .replace(/acessrios/gi, 'Acessórios')
-    .replace(/acess\?+rios/gi, 'Acessórios')
-    .replace(/ntima/gi, 'Íntima')
-    .replace(/\?+ntima/gi, 'Íntima')
-    .replace(/papis/gi, 'Papéis')
-    .replace(/pap\?+is/gi, 'Papéis')
-    .replace(/mos/gi, 'Mãos')
-    .replace(/m\?+os/gi, 'Mãos')
-    .replace(/ps/gi, 'Pés')
-    .replace(/p\?+s/gi, 'Pés')
-    .replace(/Farmcia/gi, 'Farmácia')
-    .replace(/Farm\?+cia/gi, 'Farmácia')
+    .replace(/Descri[^\s;,\t]+/gi, 'Descrição')
+    .replace(/Raz[^\s;,\t]+/gi, 'Razão')
+    .replace(/C[^\s;,\t]+digo/gi, 'Código')
+    .replace(/Alimenta[^\s;,\t]+/gi, 'Alimentação')
+    .replace(/a[^\s;,\t]*ougue/gi, 'Açougue')
+    .replace(/latic[^\s;,\t]+nios/gi, 'Laticínios')
+    .replace(/hortifr[^\s;,\t]+ti/gi, 'Hortifrúti')
+    .replace(/Dom[^\s;,\t]+stica/gi, 'Doméstica')
+    .replace(/descart[^\s;,\t]+veis/gi, 'Descartáveis')
+    .replace(/acess[^\s;,\t]+rios/gi, 'Acessórios')
+    .replace(/[^\s;,\t]*ntima/gi, 'Íntima')
+    .replace(/pap[^\s;,\t]+is/gi, 'Papéis')
+    .replace(/Farm[^\s;,\t]+cia/gi, 'Farmácia')
     .replace(/\ufffd/g, '');
 }
 
@@ -71,9 +52,69 @@ export function parseBRLNumber(val: any): number {
 }
 
 /**
- * Parses raw CSV / TSV text containing NFC-e items and merges with existing ones if specified
+ * Parses raw CSV text into a 2D matrix of strings taking quoted multiline cells into account
  */
-export function parseCsvData(csvText: string, existingItems: NFCeItem[] = [], existingReceipts: NFCeReceipt[] = []): {
+export function parseCsvToMatrix(csvText: string): string[][] {
+  const rows: string[][] = [];
+  let currentRow: string[] = [];
+  let currentCell = '';
+  let inQuotes = false;
+
+  // Determine delimiter (; or , or \t)
+  let delimiter = ';';
+  const firstLineEnd = csvText.indexOf('\n');
+  const sample = firstLineEnd !== -1 ? csvText.slice(0, firstLineEnd) : csvText;
+  const semiCount = (sample.match(/;/g) || []).length;
+  const commaCount = (sample.match(/,/g) || []).length;
+  const tabCount = (sample.match(/\t/g) || []).length;
+  if (tabCount > semiCount && tabCount > commaCount) delimiter = '\t';
+  else if (commaCount > semiCount) delimiter = ',';
+
+  for (let i = 0; i < csvText.length; i++) {
+    const char = csvText[i];
+    if (char === '"') {
+      if (inQuotes && csvText[i + 1] === '"') {
+        currentCell += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === delimiter && !inQuotes) {
+      currentRow.push(currentCell.trim());
+      currentCell = '';
+    } else if ((char === '\n' || char === '\r') && !inQuotes) {
+      if (char === '\r' && csvText[i + 1] === '\n') {
+        i++;
+      }
+      currentRow.push(currentCell.trim());
+      if (currentRow.some(c => c.length > 0)) {
+        rows.push(currentRow);
+      }
+      currentRow = [];
+      currentCell = '';
+    } else {
+      currentCell += char;
+    }
+  }
+
+  if (currentCell.length > 0 || currentRow.length > 0) {
+    currentRow.push(currentCell.trim());
+    if (currentRow.some(c => c.length > 0)) {
+      rows.push(currentRow);
+    }
+  }
+
+  return rows;
+}
+
+/**
+ * Parses 2D matrix rows (from Excel sheet or CSV) containing NFC-e items
+ */
+export function parseMatrixData(
+  rawRows: (string | number | null | undefined)[][],
+  existingItems: NFCeItem[] = [],
+  existingReceipts: NFCeReceipt[] = []
+): {
   success: boolean;
   items: NFCeItem[];
   receipts: NFCeReceipt[];
@@ -81,67 +122,57 @@ export function parseCsvData(csvText: string, existingItems: NFCeItem[] = [], ex
   totalParsed: number;
   newItemsCount: number;
 } {
-  if (!csvText || !csvText.trim()) {
-    return { success: false, items: existingItems, receipts: existingReceipts, error: 'O conteúdo CSV está vazio.', totalParsed: 0, newItemsCount: 0 };
+  if (!rawRows || rawRows.length === 0) {
+    return { success: false, items: existingItems, receipts: existingReceipts, error: 'A planilha está vazia.', totalParsed: 0, newItemsCount: 0 };
   }
 
-  const lines = csvText
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(line => line.length > 0);
+  // Sanitize all cell strings (replace internal line breaks with spaces)
+  const rows: string[][] = rawRows
+    .map(row => (row || []).map(cell => fixMojibake(String(cell ?? '').replace(/[\r\n]+/g, ' ').trim())))
+    .filter(row => row.some(cell => cell.length > 0));
 
-  if (lines.length === 0) {
-    return { success: false, items: existingItems, receipts: existingReceipts, error: 'Nenhuma linha válida encontrada no CSV.', totalParsed: 0, newItemsCount: 0 };
+  if (rows.length === 0) {
+    return { success: false, items: existingItems, receipts: existingReceipts, error: 'Nenhuma linha com dados encontrada.', totalParsed: 0, newItemsCount: 0 };
   }
 
-  // Determine delimiter (; or , or \t)
-  const firstLine = lines[0];
-  const semiCount = (firstLine.match(/;/g) || []).length;
-  const commaCount = (firstLine.match(/,/g) || []).length;
-  const tabCount = (firstLine.match(/\t/g) || []).length;
+  // Find header row by checking the first 10 rows
+  let headerRowIndex = 0;
+  let isHeader = false;
+  let headerCols: string[] = [];
 
-  let delimiter = ';';
-  if (tabCount > semiCount && tabCount > commaCount) delimiter = '\t';
-  else if (commaCount > semiCount) delimiter = ',';
+  for (let r = 0; r < Math.min(rows.length, 10); r++) {
+    const candidateCols = rows[r].map(col => col.toLowerCase().trim());
+    const matchCount = candidateCols.filter(col => 
+      col.includes('descri') || 
+      col.includes('prod') || 
+      col.includes('item') ||
+      col.includes('valor') || 
+      col.includes('total') ||
+      col.includes('social') || 
+      col.includes('razao') ||
+      col.includes('razão') ||
+      col.includes('data') ||
+      col.includes('emiss') ||
+      col.includes('num') ||
+      col.includes('unid') ||
+      col.includes('qtd') ||
+      col.includes('tipo') ||
+      col.includes('categ')
+    ).length;
 
-  // Helper to split line taking quotes into account
-  const splitLine = (line: string): string[] => {
-    const result: string[] = [];
-    let current = '';
-    let inQuotes = false;
-
-    for (let i = 0; i < line.length; i++) {
-      const char = line[i];
-      if (char === '"') {
-        if (inQuotes && line[i + 1] === '"') {
-          current += '"';
-          i++;
-        } else {
-          inQuotes = !inQuotes;
-        }
-      } else if (char === delimiter && !inQuotes) {
-        result.push(current.trim());
-        current = '';
-      } else {
-        current += char;
-      }
+    if (matchCount >= 2 || candidateCols.some(c => c.includes('descri') || c.includes('produto / item'))) {
+      headerRowIndex = r;
+      isHeader = true;
+      headerCols = candidateCols;
+      break;
     }
-    result.push(current.trim());
-    return result;
-  };
+  }
 
-  // Check if first line is a header
-  const headerCols = splitLine(firstLine).map(col => fixMojibake(col.toLowerCase().replace(/["'\r\n]/g, '')));
-  const isHeader = headerCols.some(col => 
-    col.includes('descri') || 
-    col.includes('prod') || 
-    col.includes('valor') || 
-    col.includes('social') || 
-    col.includes('data') ||
-    col.includes('num')
-  );
+  if (!isHeader && rows.length > 0) {
+    headerCols = rows[0].map(col => col.toLowerCase().trim());
+  }
 
-  const dataLines = isHeader ? lines.slice(1) : lines;
+  const dataRows = isHeader ? rows.slice(headerRowIndex + 1) : rows;
 
   // Header column index mappings (initialize to -1)
   let idxNum = -1;
@@ -161,34 +192,34 @@ export function parseCsvData(csvText: string, existingItems: NFCeItem[] = [], ex
 
   if (isHeader) {
     headerCols.forEach((col, idx) => {
-      const c = col.toLowerCase();
-      if ((c.includes('num') || c === 'item' || c.startsWith('1.')) && !c.includes('nota') && idxNum === -1) {
+      const c = col.toLowerCase().trim();
+      if ((c.includes('num') || c === 'item' || c === 'nº' || c === 'seq' || c.startsWith('1.')) && !c.includes('nota') && idxNum === -1) {
         idxNum = idx;
-      } else if ((c.includes('descri') || c.includes('produto / item')) && idxDesc === -1) {
+      } else if ((c.includes('descri') || c.includes('produto / item') || c.includes('mercadoria') || c.includes('artigo') || c.includes('discrimina') || c === 'nome' || c === 'descricao') && idxDesc === -1) {
         idxDesc = idx;
-      } else if ((c.includes('unidade') || c.includes('unid') || c.includes('comercial') || c.includes('und')) && idxUnidade === -1) {
+      } else if ((c.includes('unidade') || c.includes('unid') || c.includes('comercial') || c.includes('und') || c === 'un') && idxUnidade === -1) {
         idxUnidade = idx;
-      } else if ((c.startsWith('qtd') || c.includes('quant')) && idxQtd === -1) {
+      } else if ((c.startsWith('qtd') || c.includes('quant') || c === 'qte' || c === 'quantidade') && idxQtd === -1) {
         idxQtd = idx;
-      } else if ((c.includes('valor') || c.includes('total') || c.includes('r$')) && !c.includes('r$/kg') && !c.includes('r$ / kg') && idxValor === -1) {
+      } else if ((c.includes('valor') || c.includes('total') || c.includes('r$')) && !c.includes('r$/kg') && !c.includes('r$ / kg') && !c.includes('unit') && idxValor === -1) {
         idxValor = idx;
-      } else if ((c.includes('raz') || c.includes('nome') || c.includes('estab') || c.includes('loja')) && idxRazao === -1) {
+      } else if ((c.includes('raz') || c.includes('estab') || c.includes('loja') || c.includes('supermercado') || c.includes('fornecedor') || c.includes('empresa')) && idxRazao === -1) {
         idxRazao = idx;
       } else if ((c.includes('data') || c.includes('emiss')) && idxData === -1) {
         idxData = idx;
-      } else if ((c.includes('r$/kg') || c.includes('r$ / kg') || c.includes('preco/kg') || c.includes('preço/kg') || c.includes('preco') || c.includes('preço')) && idxPrecoKg === -1) {
+      } else if ((c.includes('r$/kg') || c.includes('r$ / kg') || c.includes('preco/kg') || c.includes('preço/kg') || c.includes('unitario') || c.includes('unitário') || c.includes('vlr unit')) && idxPrecoKg === -1) {
         idxPrecoKg = idx;
-      } else if ((c.includes('peso') || c.includes('calculado')) && idxPesoKg === -1) {
+      } else if ((c.includes('peso') || c.includes('calculado') || c.includes('kg') || c.includes('peso liq')) && idxPesoKg === -1) {
         idxPesoKg = idx;
       } else if ((c.includes('cod') || c.includes('código')) && idxCodigo === -1) {
         idxCodigo = idx;
       } else if ((c.includes('ano-m') || c.includes('anomes') || c.includes('mes')) && idxAnoMes === -1) {
         idxAnoMes = idx;
-      } else if ((c.includes('tipo') || c.includes('categoria')) && idxTipo === -1) {
+      } else if ((c.includes('tipo') || c.includes('categoria') || c.includes('departamento') || c.includes('secao') || c.includes('seção') || c.includes('grupo') || c.includes('setor')) && idxTipo === -1) {
         idxTipo = idx;
-      } else if ((c.includes('produto') || c.includes('subtipo')) && !c.includes('descri') && idxProduto === -1) {
+      } else if ((c.includes('subtipo') || c.includes('subcategoria') || c.includes('sub-categoria') || c.includes('subgrupo') || (c.includes('produto') && !c.includes('descri') && !c.includes('item'))) && idxProduto === -1) {
         idxProduto = idx;
-      } else if (c.includes('detalhe') && idxDetalhe === -1) {
+      } else if ((c.includes('detalhe') || c.includes('obs') || c.includes('observa') || c.includes('especifica')) && idxDetalhe === -1) {
         idxDetalhe = idx;
       }
     });
@@ -221,13 +252,11 @@ export function parseCsvData(csvText: string, existingItems: NFCeItem[] = [], ex
 
   const newlyAddedItems: NFCeItem[] = [];
 
-  dataLines.forEach((line, lineIndex) => {
-    if (!line.trim()) return;
-    const cols = splitLine(line).map(c => fixMojibake(c.replace(/^"|"$/g, '').trim()));
-    if (cols.length < 2) return;
+  dataRows.forEach((cols) => {
+    if (!cols || cols.length < 2) return;
 
-    const descricao = (idxDesc !== -1 ? cols[idxDesc] : cols[1]) || '';
-    if (!descricao) return;
+    const descricao = (idxDesc !== -1 && cols[idxDesc] !== undefined ? cols[idxDesc] : cols[1]) || '';
+    if (!descricao || !descricao.trim()) return;
 
     const razaoSocial = (idxRazao !== -1 && cols[idxRazao]) ? cols[idxRazao].trim() : 'SENDAS DISTRIBUIDORA S/A';
     const dataStr = (idxData !== -1 && cols[idxData]) ? cols[idxData].trim() : new Date().toLocaleString('pt-BR');
@@ -253,23 +282,40 @@ export function parseCsvData(csvText: string, existingItems: NFCeItem[] = [], ex
       }
     }
 
-    const valorTotal = idxValor !== -1 ? parseBRLNumber(cols[idxValor]) : 0;
-    const precoPorKg = idxPrecoKg !== -1 ? parseBRLNumber(cols[idxPrecoKg]) : undefined;
-    const pesoKg = idxPesoKg !== -1 ? parseBRLNumber(cols[idxPesoKg]) : (unidade.toUpperCase() === 'KG' ? qtd : undefined);
+    const valorTotal = idxValor !== -1 && cols[idxValor] ? parseBRLNumber(cols[idxValor]) : 0;
+    const precoPorKg = idxPrecoKg !== -1 && cols[idxPrecoKg] ? parseBRLNumber(cols[idxPrecoKg]) : undefined;
+    const pesoKg = idxPesoKg !== -1 && cols[idxPesoKg] ? parseBRLNumber(cols[idxPesoKg]) : (unidade.toUpperCase() === 'KG' ? qtd : undefined);
 
-    let tipo = (idxTipo !== -1 && cols[idxTipo]) ? cols[idxTipo].trim() : '';
-    let produto = (idxProduto !== -1 && cols[idxProduto]) ? cols[idxProduto].trim() : '';
-    let detalhe = (idxDetalhe !== -1 && cols[idxDetalhe]) ? cols[idxDetalhe].trim() : '';
+    let rawTipo = (idxTipo !== -1 && cols[idxTipo]) ? cols[idxTipo].trim() : '';
+    let rawProduto = (idxProduto !== -1 && cols[idxProduto]) ? cols[idxProduto].trim() : '';
+    let rawDetalhe = (idxDetalhe !== -1 && cols[idxDetalhe]) ? cols[idxDetalhe].trim() : '';
 
-    // Auto classify if missing
-    if (!tipo || !produto) {
-      const autoClass = classifyProduct(descricao);
-      if (!tipo) tipo = autoClass.tipo;
-      if (!produto) produto = autoClass.produto;
-      if (!detalhe) detalhe = autoClass.detalhe;
-    } else if (!detalhe) {
-      const autoClass = classifyProduct(descricao);
-      detalhe = autoClass.detalhe;
+    // Direct User-defined routines:
+    // 1. Validate TIPO directly
+    let tipo = normalizeTipo(rawTipo);
+
+    // 2. Validate PRODUTO directly against the returned TIPO
+    let produto = normalizeProduto(rawProduto, tipo);
+
+    // 3. Fallback to learned historical memory ONLY if not provided in sheet or resulted in Outros
+    let detalhe = rawDetalhe;
+    if (tipo === 'Outros' && (!rawTipo || normalizeText(rawTipo) === 'outros')) {
+      const autoClass = classifyProduct(descricao, existingItems);
+      if (autoClass.tipo !== 'Outros') {
+        tipo = autoClass.tipo as any;
+        produto = autoClass.produto;
+        detalhe = autoClass.detalhe;
+      }
+    }
+
+    // 4. Fill missing detail automatically from (tipo, produto) lookup
+    if (!detalhe || detalhe === 'Outros') {
+      detalhe = getDetalheForTipoProduto(tipo, produto);
+    }
+
+    // Auto-learn this classification for future items and QR scans
+    if (tipo !== 'Outros' && produto !== 'Outros') {
+      learnItemClassification(descricao, tipo, produto, detalhe);
     }
 
     // Generate stable receipt grouping key based on date and store name
@@ -290,7 +336,7 @@ export function parseCsvData(csvText: string, existingItems: NFCeItem[] = [], ex
       receiptsMap.set(receiptKey, receipt);
     }
 
-    // Parse exact item sequence number from CSV (e.g. 1..12)
+    // Parse exact item sequence number from sheet/CSV (e.g. 1..12)
     let itemNum = receipt.itens.length + 1;
     if (idxNum !== -1 && cols[idxNum]) {
       const parsedNum = parseInt(cols[idxNum], 10);
@@ -346,12 +392,31 @@ export function parseCsvData(csvText: string, existingItems: NFCeItem[] = [], ex
   });
 
   return {
-    success: newlyAddedItems.length > 0 || (finalItems.length > 0 && dataLines.length === 0),
+    success: newlyAddedItems.length > 0 || (finalItems.length > 0 && dataRows.length === 0),
     items: finalItems,
     receipts: finalReceipts,
-    totalParsed: dataLines.length,
+    totalParsed: dataRows.length,
     newItemsCount: newlyAddedItems.length
   };
+}
+
+/**
+ * Parses raw CSV / TSV text containing NFC-e items and merges with existing ones if specified
+ */
+export function parseCsvData(csvText: string, existingItems: NFCeItem[] = [], existingReceipts: NFCeReceipt[] = []): {
+  success: boolean;
+  items: NFCeItem[];
+  receipts: NFCeReceipt[];
+  error?: string;
+  totalParsed: number;
+  newItemsCount: number;
+} {
+  if (!csvText || !csvText.trim()) {
+    return { success: false, items: existingItems, receipts: existingReceipts, error: 'O conteúdo CSV está vazio.', totalParsed: 0, newItemsCount: 0 };
+  }
+
+  const matrix = parseCsvToMatrix(csvText);
+  return parseMatrixData(matrix, existingItems, existingReceipts);
 }
 
 function capitalizeWords(str: string): string {

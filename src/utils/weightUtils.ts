@@ -92,3 +92,69 @@ export function calculatePrecoPorKg(
   // Otherwise, for discrete units (e.g. 2 units of 395g each), total weight is pesoKg * qtd
   return safeVal / (pesoKg * safeQtd);
 }
+
+/**
+ * Extracts volume in Liters for beverage items (bebidas).
+ */
+export function extractVolumeLitros(
+  descricao: string,
+  qtd: number,
+  unidade?: string,
+  produto = ''
+): number {
+  const cleanUnit = (unidade || '').trim().toUpperCase();
+  const cleanDesc = (descricao || '').trim();
+
+  // If unit is L or LT or LTS or LITRO
+  if (cleanUnit === 'L' || cleanUnit === 'LT' || cleanUnit === 'LTS' || cleanUnit === 'LITRO' || cleanUnit === 'LITROS') {
+    const parsedQtd = Number(qtd);
+    if (!isNaN(parsedQtd) && parsedQtd > 0) {
+      return Number(parsedQtd.toFixed(3));
+    }
+  }
+
+  if (cleanDesc) {
+    // 1. Look for explicit Liters: e.g. "1.5L", "2L", "1L", "2 LITROS", "1,5 LT"
+    const lRegex = /(?:^|\s|[^\d.,])(\d+(?:[.,]\d+)?)\s*(?:l|lt|lts|litro|litros)(?:\b|[^\w]|$)/i;
+    const lMatch = cleanDesc.match(lRegex);
+    if (lMatch && lMatch[1]) {
+      const val = parseFloat(lMatch[1].replace(',', '.'));
+      if (!isNaN(val) && val > 0) {
+        return Number(val.toFixed(3));
+      }
+    }
+
+    // 2. Look for Milliliters: e.g. "350ml", "500 ML", "250ml", "900ml"
+    const mlRegex = /(?:^|\s|[^\d.,])(\d+(?:[.,]\d+)?)\s*(?:ml|mls)(?:\b|[^\w]|$)/i;
+    const mlMatch = cleanDesc.match(mlRegex);
+    if (mlMatch && mlMatch[1]) {
+      const val = parseFloat(mlMatch[1].replace(',', '.'));
+      if (!isNaN(val) && val > 0) {
+        return Number((val / 1000).toFixed(3));
+      }
+    }
+  }
+
+  return 0;
+}
+
+/**
+ * Calculates the price per Liter (R$/litro) for beverages.
+ */
+export function calculatePrecoPorLitro(
+  valorTotal: number,
+  volumeL: number,
+  qtd: number,
+  unidade?: string
+): number {
+  if (!volumeL || volumeL <= 0) return 0;
+  const cleanUnit = (unidade || '').trim().toUpperCase();
+  const safeQtd = Number(qtd) > 0 ? Number(qtd) : 1;
+  const safeVal = Number(valorTotal) || 0;
+
+  if (cleanUnit === 'L' || cleanUnit === 'LT' || Math.abs(volumeL - safeQtd) < 0.0001) {
+    return safeVal / volumeL;
+  }
+
+  return safeVal / (volumeL * safeQtd);
+}

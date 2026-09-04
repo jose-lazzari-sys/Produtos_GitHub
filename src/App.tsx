@@ -10,7 +10,8 @@ import {
   Sparkles,
   Info,
   Cloud,
-  FileText
+  FileText,
+  BarChart3
 } from 'lucide-react';
 import { NFCeItem, NFCeReceipt } from './types';
 import {
@@ -51,7 +52,7 @@ import { EditItemModal } from './components/EditItemModal';
 import { CloudSyncHeader } from './components/CloudSyncHeader';
 
 export default function App() {
-  // Navigation: 'scanner' (Screen 1) | 'report' (Screen 2) | 'nfApp' (Screen 3) | 'actions' (Screen 4)
+  // Navigation: 'scanner' (Screen 1) | 'report' (Screen 2: Tabela / Relatório & Dashboard) | 'nfApp' (Screen 3) | 'actions' (Screen 4)
   const [activeTab, setActiveTab] = useState<'scanner' | 'report' | 'nfApp' | 'actions'>('scanner');
 
   // Persistence State
@@ -648,7 +649,7 @@ export default function App() {
       </main>
 
       {/* Mobile Bottom Navigation Bar (Large touch targets for smartphones) */}
-      <div className="sm:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 px-2 py-2 flex items-center justify-around shadow-2xl">
+      <div className="sm:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 px-1 py-2 flex items-center justify-around shadow-2xl">
         <button
           id="mobile-nav-scanner"
           onClick={() => setActiveTab('scanner')}
@@ -679,7 +680,7 @@ export default function App() {
               </span>
             )}
           </div>
-          <span className="text-[10px] leading-none">2. Itens</span>
+          <span className="text-[10px] leading-none">2. Relatório</span>
         </button>
 
         <button

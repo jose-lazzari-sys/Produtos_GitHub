@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   FileText, 
   Search, 
@@ -14,7 +14,15 @@ import {
   ArrowUpDown,
   DollarSign,
   Download,
-  AlertCircle
+  AlertCircle,
+  CheckSquare,
+  Square,
+  MinusSquare,
+  X,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight
 } from 'lucide-react';
 import { NFCeReceipt, NFCeItem } from '../types';
 import { parseDateToTimestamp } from '../utils/storage';
@@ -23,7 +31,9 @@ interface NfAppTabProps {
   receipts: NFCeReceipt[];
   items: NFCeItem[];
   onUpdateReceiptConferido: (receiptId: string, conferido: 'Sim' | '-') => void;
+  onBulkUpdateConferido?: (conferido: 'Sim' | '-') => void;
   onDeleteReceipt?: (receiptId: string) => void;
+  onDeleteMultipleReceipts?: (receiptIds: string[]) => void;
   onViewItemsInReport?: (receiptId: string) => void;
   onSwitchToScanner?: () => void;
 }
@@ -32,7 +42,9 @@ export function NfAppTab({
   receipts,
   items,
   onUpdateReceiptConferido,
+  onBulkUpdateConferido,
   onDeleteReceipt,
+  onDeleteMultipleReceipts,
   onViewItemsInReport,
   onSwitchToScanner
 }: NfAppTabProps) {
@@ -42,6 +54,12 @@ export function NfAppTab({
   const [sortField, setSortField] = useState<'data' | 'qtd' | 'razao' | 'total' | 'conferido'>('data');
   const [sortAsc, setSortAsc] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [selectedReceiptIds, setSelectedReceiptIds] = useState<Set<string>>(new Set());
+  const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState(false);
+
+  // Pagination State for Receipts
+  const [pageSize, setPageSize] = useState<number>(25);
+  const [currentPage, setCurrentPage] = useState<number>(1);
 
   // Filter and Sort Receipts
   const filteredReceipts = useMemo(() => {
@@ -99,6 +117,167 @@ export function NfAppTab({
   const totalConferidas = receipts.filter(r => r.conferido === 'Sim').length;
   const totalPendentes = totalNotas - totalConferidas;
 
+  // Auto-reset page on search, filter, sort, or pageSize change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, statusFilter, sortField, sortAsc, pageSize]);
+
+  const totalReceiptsCount = filteredReceipts.length;
+  const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(totalReceiptsCount / pageSize));
+  const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
+
+  const paginatedReceipts = useMemo(() => {
+    if (pageSize === 0) return filteredReceipts;
+    const start = (safeCurrentPage - 1) * pageSize;
+    return filteredReceipts.slice(start, start + pageSize);
+  }, [filteredReceipts, safeCurrentPage, pageSize]);
+
+  const startIndex = pageSize === 0 ? 0 : (safeCurrentPage - 1) * pageSize;
+  const endIndex = pageSize === 0 ? totalReceiptsCount : Math.min(startIndex + pageSize, totalReceiptsCount);
+
+  // Selection helpers
+  const isAllFilteredSelected = paginatedReceipts.length > 0 && paginatedReceipts.every(r => selectedReceiptIds.has(r.id));
+  const isSomeFilteredSelected = paginatedReceipts.some(r => selectedReceiptIds.has(r.id)) && !isAllFilteredSelected;
+
+  const toggleSelectAllVisible = () => {
+    const next = new Set(selectedReceiptIds);
+    if (isAllFilteredSelected) {
+      paginatedReceipts.forEach(r => next.delete(r.id));
+    } else {
+      paginatedReceipts.forEach(r => next.add(r.id));
+    }
+    setSelectedReceiptIds(next);
+  };
+
+  const renderPaginationBar = (position: 'top' | 'bottom') => {
+    if (totalReceiptsCount <= 25 && pageSize === 25) return null;
+
+    return (
+      <div 
+        className={`px-4 py-2.5 bg-slate-50/95 dark:bg-slate-900/95 border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs ${
+          position === 'top' ? 'border-b' : 'border-t'
+        }`}
+      >
+        <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
+          <span>
+            Mostrando{' '}
+            <strong className="text-slate-900 dark:text-white font-bold">
+              {pageSize === 0 ? `todas as ${totalReceiptsCount}` : `${startIndex + 1}–${endIndex}`}
+            </strong>{' '}
+            de{' '}
+            <strong className="text-slate-900 dark:text-white font-bold">{totalReceiptsCount}</strong> notas
+            {receipts.length !== totalReceiptsCount && (
+              <span className="text-slate-400 dark:text-slate-500 ml-1">
+                (filtradas de {receipts.length} totais)
+              </span>
+            )}
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <span className="text-slate-500 dark:text-slate-400">Por pág:</span>
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value));
+                setCurrentPage(1);
+              }}
+              className="h-8 px-2 py-0.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 font-semibold text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-emerald-500 cursor-pointer text-xs"
+            >
+              <option value={25}>25 notas</option>
+              <option value={50}>50 notas</option>
+              <option value={100}>100 notas</option>
+              <option value={0}>Todas ({totalReceiptsCount})</option>
+            </select>
+          </div>
+
+          {pageSize > 0 && totalPages > 1 && (
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setCurrentPage(1)}
+                disabled={safeCurrentPage === 1}
+                title="Primeira Página"
+                className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors"
+              >
+                <ChevronsLeft className="w-4 h-4" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={safeCurrentPage === 1}
+                title="Página Anterior"
+                className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+
+              <span className="px-2 font-medium text-slate-700 dark:text-slate-300 text-xs">
+                Pág. <strong className="text-emerald-700 dark:text-emerald-400 font-bold">{safeCurrentPage}</strong> de {totalPages}
+              </span>
+
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={safeCurrentPage === totalPages}
+                title="Próxima Página"
+                className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setCurrentPage(totalPages)}
+                disabled={safeCurrentPage === totalPages}
+                title="Última Página"
+                className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors"
+              >
+                <ChevronsRight className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const toggleSelectReceipt = (receiptId: string) => {
+    const next = new Set(selectedReceiptIds);
+    if (next.has(receiptId)) {
+      next.delete(receiptId);
+    } else {
+      next.add(receiptId);
+    }
+    setSelectedReceiptIds(next);
+  };
+
+  const clearSelection = () => {
+    setSelectedReceiptIds(new Set());
+  };
+
+  const selectAllInApp = () => {
+    setSelectedReceiptIds(new Set(receipts.map(r => r.id)));
+  };
+
+  const selectedReceiptsList = useMemo(() => {
+    return receipts.filter(r => selectedReceiptIds.has(r.id));
+  }, [receipts, selectedReceiptIds]);
+
+  const selectedCount = selectedReceiptIds.size;
+  const selectedTotalValue = selectedReceiptsList.reduce((acc, r) => acc + (r.valorTotal || 0), 0);
+  const selectedTotalItems = selectedReceiptsList.reduce((acc, r) => acc + (r.itens?.length || 0), 0);
+
+  const handleConfirmBulkDelete = () => {
+    if (onDeleteMultipleReceipts && selectedCount > 0) {
+      onDeleteMultipleReceipts(Array.from(selectedReceiptIds));
+      setSelectedReceiptIds(new Set());
+      setIsBulkDeleteModalOpen(false);
+    }
+  };
+
   const handleSort = (field: 'data' | 'qtd' | 'razao' | 'total' | 'conferido') => {
     if (sortField === field) {
       setSortAsc(!sortAsc);
@@ -155,6 +334,53 @@ export function NfAppTab({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {onBulkUpdateConferido && receipts.length > 0 && (
+              totalPendentes > 0 ? (
+                <button
+                  id="bulk-conferido-sim-btn"
+                  onClick={() => onBulkUpdateConferido('Sim')}
+                  title="Marcar todas as notas fiscais como conferidas (Sim)"
+                  className="py-2 px-3.5 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 text-xs font-bold hover:bg-emerald-100 dark:hover:bg-emerald-900/80 transition-colors flex items-center gap-1.5"
+                >
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <span>Marcar Todas como Conferidas (Sim)</span>
+                </button>
+              ) : (
+                <button
+                  id="bulk-conferido-reset-btn"
+                  onClick={() => onBulkUpdateConferido('-')}
+                  title="Desmarcar todas as notas fiscais para pendente (-)"
+                  className="py-2 px-3.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors flex items-center gap-1.5"
+                >
+                  <span>Desmarcar Todas (-)</span>
+                </button>
+              )
+            )}
+
+            {onDeleteMultipleReceipts && receipts.length > 0 && (
+              selectedCount > 0 ? (
+                <button
+                  id="header-bulk-delete-btn"
+                  onClick={() => setIsBulkDeleteModalOpen(true)}
+                  title="Excluir notas fiscais selecionadas"
+                  className="py-2 px-3.5 rounded-xl border border-rose-300 dark:border-rose-700 bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 text-xs font-bold hover:bg-rose-100 dark:hover:bg-rose-900/80 transition-colors flex items-center gap-1.5"
+                >
+                  <Trash2 className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+                  <span>Excluir Selecionadas ({selectedCount})</span>
+                </button>
+              ) : (
+                <button
+                  id="select-all-nf-btn"
+                  onClick={selectAllInApp}
+                  title="Selecionar todas as notas para exclusão"
+                  className="py-2 px-3.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors flex items-center gap-1.5"
+                >
+                  <CheckSquare className="w-4 h-4 text-slate-500" />
+                  <span>Selecionar Todas</span>
+                </button>
+              )
+            )}
+
             <button
               id="export-nf-csv-btn"
               onClick={handleExportNfCsv}
@@ -293,6 +519,44 @@ export function NfAppTab({
         </div>
       </div>
 
+      {/* Selection Action Bar (Shown when 1 or more receipts are selected) */}
+      {selectedCount > 0 && (
+        <div className="p-3.5 sm:p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-in fade-in duration-200">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-rose-600 text-white flex items-center justify-center font-black text-sm shadow-xs shrink-0">
+              {selectedCount}
+            </div>
+            <div>
+              <span className="text-sm font-bold text-slate-900 dark:text-white block">
+                {selectedCount} {selectedCount === 1 ? 'Nota Fiscal selecionada' : 'Notas Fiscais selecionadas'}
+              </span>
+              <span className="text-xs text-rose-700 dark:text-rose-300">
+                Total acumulado: <strong>R$ {selectedTotalValue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> • {selectedTotalItems} {selectedTotalItems === 1 ? 'produto associado' : 'produtos associados'}
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+            <button
+              type="button"
+              id="clear-selection-btn"
+              onClick={clearSelection}
+              className="py-2 px-3.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 text-xs font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              Cancelar Seleção
+            </button>
+            <button
+              type="button"
+              id="delete-selected-receipts-btn"
+              onClick={() => setIsBulkDeleteModalOpen(true)}
+              className="py-2 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-all shadow-xs flex items-center gap-2 cursor-pointer"
+            >
+              <Trash2 className="w-4 h-4" />
+              <span>Excluir {selectedCount} {selectedCount === 1 ? 'Nota' : 'Notas'}</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Main Table Card */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-xs overflow-hidden">
         {filteredReceipts.length === 0 ? (
@@ -319,89 +583,135 @@ export function NfAppTab({
             )}
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-50 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-800 text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider select-none">
-                  {/* DATA */}
-                  <th 
-                    className="py-3.5 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                    onClick={() => handleSort('data')}
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span>DATA</span>
-                      <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
-                    </div>
-                  </th>
+          <>
+            {renderPaginationBar('top')}
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-800 text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider select-none">
+                    {/* CHECKBOX SELEÇÃO */}
+                    <th className="py-3.5 px-3 text-center w-12 select-none">
+                      <button
+                        type="button"
+                        id="select-all-visible-checkbox"
+                        onClick={toggleSelectAllVisible}
+                        title={isAllFilteredSelected ? "Desmarcar todas as notas exibidas" : "Selecionar todas as notas exibidas"}
+                        className="inline-flex items-center justify-center p-1 rounded-md text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white transition-colors cursor-pointer"
+                      >
+                        {isAllFilteredSelected ? (
+                          <CheckSquare className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                        ) : isSomeFilteredSelected ? (
+                          <MinusSquare className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                        ) : (
+                          <Square className="w-4 h-4 text-slate-400 dark:text-slate-500" />
+                        )}
+                      </button>
+                    </th>
 
-                  {/* QTD ITENS */}
-                  <th 
-                    className="py-3.5 px-4 text-center cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                    onClick={() => handleSort('qtd')}
-                  >
-                    <div className="flex items-center justify-center gap-1.5">
-                      <span>QTD ITENS</span>
-                      <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
-                    </div>
-                  </th>
+                    {/* DATA */}
+                    <th 
+                      className="py-3.5 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                      onClick={() => handleSort('data')}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>DATA</span>
+                        <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
+                      </div>
+                    </th>
 
-                  {/* NOME / RAZÃO SOCIAL */}
-                  <th 
-                    className="py-3.5 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                    onClick={() => handleSort('razao')}
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span>NOME / RAZÃO SOCIAL</span>
-                      <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
-                    </div>
-                  </th>
+                    {/* QTD ITENS */}
+                    <th 
+                      className="py-3.5 px-4 text-center cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                      onClick={() => handleSort('qtd')}
+                    >
+                      <div className="flex items-center justify-center gap-1.5">
+                        <span>QTD ITENS</span>
+                        <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
+                      </div>
+                    </th>
 
-                  {/* TOTAL R$ */}
-                  <th 
-                    className="py-3.5 px-4 text-right cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                    onClick={() => handleSort('total')}
-                  >
-                    <div className="flex items-center justify-end gap-1.5">
-                      <span>TOTAL R$</span>
-                      <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
-                    </div>
-                  </th>
+                    {/* NOME / RAZÃO SOCIAL */}
+                    <th 
+                      className="py-3.5 px-4 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                      onClick={() => handleSort('razao')}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>NOME / RAZÃO SOCIAL</span>
+                        <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
+                      </div>
+                    </th>
 
-                  {/* CONFERIDO */}
-                  <th 
-                    className="py-3.5 px-4 text-center cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                    onClick={() => handleSort('conferido')}
-                  >
-                    <div className="flex items-center justify-center gap-1.5">
-                      <span>CONFERIDO</span>
-                      <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
-                    </div>
-                  </th>
+                    {/* TOTAL R$ */}
+                    <th 
+                      className="py-3.5 px-4 text-right cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                      onClick={() => handleSort('total')}
+                    >
+                      <div className="flex items-center justify-end gap-1.5">
+                        <span>TOTAL R$</span>
+                        <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
+                      </div>
+                    </th>
 
-                  {/* Ações / Detalhes */}
-                  <th className="py-3.5 px-4 text-center w-24">
-                    <span>AÇÕES</span>
-                  </th>
-                </tr>
-              </thead>
+                    {/* CONFERIDO */}
+                    <th 
+                      className="py-3.5 px-4 text-center cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                      onClick={() => handleSort('conferido')}
+                    >
+                      <div className="flex items-center justify-center gap-1.5">
+                        <span>CONFERIDO</span>
+                        <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
+                      </div>
+                    </th>
 
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs text-slate-800 dark:text-slate-200 font-medium">
-                {filteredReceipts.map((rcpt) => {
+                    {/* Ações / Detalhes */}
+                    <th className="py-3.5 px-4 text-center w-24">
+                      <span>AÇÕES</span>
+                    </th>
+                  </tr>
+                </thead>
+
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs text-slate-800 dark:text-slate-200 font-medium">
+                  {paginatedReceipts.map((rcpt) => {
                   const isExpanded = expandedReceiptId === rcpt.id;
                   const isConferido = rcpt.conferido === 'Sim';
+                  const isSelected = selectedReceiptIds.has(rcpt.id);
                   const qtdItens = rcpt.itens?.length || 0;
 
                   return (
                     <React.Fragment key={rcpt.id}>
                       <tr 
                         className={`hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${
-                          isConferido ? 'bg-emerald-50/20 dark:bg-emerald-950/10' : ''
+                          isSelected 
+                            ? 'bg-rose-50/60 dark:bg-rose-950/30' 
+                            : isConferido 
+                            ? 'bg-emerald-50/20 dark:bg-emerald-950/10' 
+                            : ''
                         }`}
                       >
+                        {/* CHECKBOX */}
+                        <td className="py-3.5 px-3 text-center">
+                          <button
+                            type="button"
+                            id={`select-receipt-btn-${rcpt.id}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleSelectReceipt(rcpt.id);
+                            }}
+                            title={isSelected ? "Desmarcar nota fiscal" : "Selecionar nota fiscal para exclusão"}
+                            className="inline-flex items-center justify-center p-1 rounded-md transition-colors cursor-pointer"
+                          >
+                            {isSelected ? (
+                              <CheckSquare className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+                            ) : (
+                              <Square className="w-4 h-4 text-slate-300 dark:text-slate-600 hover:text-slate-500" />
+                            )}
+                          </button>
+                        </td>
+
                         {/* 1. DATA */}
                         <td className="py-3.5 px-4 whitespace-nowrap font-semibold text-slate-900 dark:text-white">
                           <div className="flex items-center gap-2">
-                            <span className="w-2 h-2 rounded-full shrink-0 bg-emerald-500" />
+                            <span className={`w-2 h-2 rounded-full shrink-0 ${isSelected ? 'bg-rose-500' : 'bg-emerald-500'}`} />
                             <span>{rcpt.data || 'Data não informada'}</span>
                           </div>
                         </td>
@@ -496,7 +806,7 @@ export function NfAppTab({
                       {/* Modal de Confirmação de Exclusão da Nota */}
                       {deleteConfirmId === rcpt.id && (
                         <tr>
-                          <td colSpan={6} className="p-0">
+                          <td colSpan={7} className="p-0">
                             <div className="p-4 bg-rose-50 dark:bg-rose-950/40 border-y border-rose-200 dark:border-rose-800 flex flex-col sm:flex-row items-center justify-between gap-3">
                               <div className="flex items-center gap-2 text-rose-800 dark:text-rose-300 text-xs">
                                 <AlertCircle className="w-4 h-4 shrink-0" />
@@ -529,7 +839,7 @@ export function NfAppTab({
                       {/* Detalhes Expandidos da Nota */}
                       {isExpanded && (
                         <tr className="bg-slate-50/70 dark:bg-slate-950/50">
-                          <td colSpan={6} className="p-4 sm:p-6 border-y border-slate-200 dark:border-slate-800">
+                          <td colSpan={7} className="p-4 sm:p-6 border-y border-slate-200 dark:border-slate-800">
                             <div className="space-y-4">
                               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
                                 <div>
@@ -608,6 +918,13 @@ export function NfAppTab({
               {/* Tabela Rodapé Totalizador */}
               <tfoot>
                 <tr className="bg-slate-50 dark:bg-slate-800/90 border-t-2 border-slate-300 dark:border-slate-700 text-xs font-black text-slate-900 dark:text-white">
+                  <td className="py-4 px-3 text-center">
+                    {selectedCount > 0 ? (
+                      <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400">
+                        {selectedCount} sel.
+                      </span>
+                    ) : null}
+                  </td>
                   <td className="py-4 px-4">
                     TOTAL ({filteredReceipts.length} {filteredReceipts.length === 1 ? 'Nota' : 'Notas'})
                   </td>
@@ -630,8 +947,59 @@ export function NfAppTab({
               </tfoot>
             </table>
           </div>
+          {renderPaginationBar('bottom')}
+        </>
         )}
       </div>
+
+      {/* Modal de Confirmação de Exclusão em Massa */}
+      {isBulkDeleteModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-5 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-rose-100 dark:bg-rose-950/80 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-slate-900 dark:text-white">
+                  Excluir {selectedCount} {selectedCount === 1 ? 'Nota Fiscal' : 'Notas Fiscais'}?
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Ação definitiva e irreversível
+                </p>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-xs text-rose-900 dark:text-rose-200 space-y-2">
+              <p className="font-semibold">
+                Você selecionou <strong>{selectedCount} {selectedCount === 1 ? 'nota' : 'notas'}</strong> totalizando <strong>R$ {selectedTotalValue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> e <strong>{selectedTotalItems} {selectedTotalItems === 1 ? 'produto cadastrado' : 'produtos cadastrados'}</strong>.
+              </p>
+              <p className="text-rose-700 dark:text-rose-300 text-[11px]">
+                Ao confirmar, todas as notas fiscais selecionadas e todos os seus itens correspondentes serão removidos permanentemente da memória e sincronizados com a nuvem.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsBulkDeleteModalOpen(false)}
+                className="py-2.5 px-4 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                id="confirm-bulk-delete-btn"
+                onClick={handleConfirmBulkDelete}
+                className="py-2.5 px-5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-all shadow-md shadow-rose-600/20 flex items-center gap-2 cursor-pointer"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Sim, Excluir ({selectedCount})</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

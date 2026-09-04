@@ -189,6 +189,7 @@ export function parseMatrixData(
   let idxTipo = -1;
   let idxProduto = -1;
   let idxDetalhe = -1;
+  let idxConferido = -1;
 
   if (isHeader) {
     headerCols.forEach((col, idx) => {
@@ -221,6 +222,8 @@ export function parseMatrixData(
         idxProduto = idx;
       } else if ((c.includes('detalhe') || c.includes('obs') || c.includes('observa') || c.includes('especifica')) && idxDetalhe === -1) {
         idxDetalhe = idx;
+      } else if ((c.includes('conferid') || c.includes('conf.') || c.includes('check') || c === 'conf' || c.includes('conferencia') || c.includes('conferência') || c.includes('status')) && idxConferido === -1) {
+        idxConferido = idx;
       }
     });
   }
@@ -322,8 +325,30 @@ export function parseMatrixData(
     const receiptKey = `${dataStr}___${razaoSocial}`;
     let receipt = receiptsMap.get(receiptKey);
 
+    // If not found by exact string, check by 10-char date prefix (DD/MM/YYYY) and store
     if (!receipt) {
-      const rcptId = generateUniqueId('rcpt');
+      const datePrefix = dataStr.slice(0, 10);
+      for (const [, existingRcpt] of receiptsMap.entries()) {
+        if (existingRcpt.razaoSocial === razaoSocial && (existingRcpt.data.startsWith(datePrefix) || datePrefix.startsWith(existingRcpt.data.slice(0, 10)))) {
+          receipt = existingRcpt;
+          break;
+        }
+      }
+    }
+
+    const rawConferido = idxConferido !== -1 && cols[idxConferido] ? String(cols[idxConferido]).trim() : '';
+    const isRowConferido = rawConferido.toLowerCase() === 'sim' || rawConferido.toLowerCase() === 's' || rawConferido === '1' || rawConferido.toLowerCase() === 'true';
+
+    if (!receipt) {
+      // Check if existing receipts had this receipt marked as 'Sim'
+      const existingMatch = existingReceipts.find(r => 
+        r.razaoSocial === razaoSocial && 
+        (r.data === dataStr || r.data.slice(0, 10) === dataStr.slice(0, 10))
+      );
+      const priorStatus = existingMatch?.conferido === 'Sim' ? 'Sim' : '-';
+      const initialConferido = isRowConferido ? 'Sim' : priorStatus;
+
+      const rcptId = existingMatch?.id || generateUniqueId('rcpt');
       receipt = {
         id: rcptId,
         razaoSocial,
@@ -331,9 +356,11 @@ export function parseMatrixData(
         valorTotal: 0,
         itens: [],
         scannedAt: new Date(parseDateToTimestamp(dataStr) || Date.now()).toISOString(),
-        conferido: '-'
+        conferido: initialConferido
       };
       receiptsMap.set(receiptKey, receipt);
+    } else if (isRowConferido) {
+      receipt.conferido = 'Sim';
     }
 
     // Parse exact item sequence number from sheet/CSV (e.g. 1..12)

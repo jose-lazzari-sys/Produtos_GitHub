@@ -51,6 +51,19 @@
         "updatedAt": { "type": "string" }
       },
       "required": ["id", "descricao", "qtd", "valorTotal", "razaoSocial", "data", "tipo", "produto", "detalhe", "userId"]
+    },
+    "ItemChunk": {
+      "title": "ItemChunk",
+      "description": "Batched chunk of purchased items to support datasets exceeding Firestore 1MB document limit",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "chunkIndex": { "type": "number" },
+        "totalChunks": { "type": "number" },
+        "items": { "type": "array" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["userId", "chunkIndex", "items", "updatedAt"]
     }
   },
   "firestore": {
@@ -65,6 +78,10 @@
     "/users/{userId}/items/{itemId}": {
       "schema": "Item",
       "description": "Individual purchased items belonging to the user"
+    },
+    "/users/{userId}/itemChunks/{chunkId}": {
+      "schema": "ItemChunk",
+      "description": "Batched item chunks for high volume datasets within 1MB limit"
     }
   }
 }

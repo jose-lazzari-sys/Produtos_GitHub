@@ -210,6 +210,7 @@ export function getStoredReceipts(): NFCeReceipt[] {
         data: receiptData,
         valorTotal: exactValorTotal,
         conferido: conferidoStatus,
+        conferidoUpdatedAt: rcpt.conferidoUpdatedAt,
         itens: (rcpt.itens || []).map((item, idx) => {
           let itemRazao = item.razaoSocial;
           if (!itemRazao || itemRazao === 'Estabelecimento Sefaz SP' || itemRazao === 'Estabelecimento Comercial') {
@@ -893,54 +894,121 @@ export function updateReceiptConferido(receiptId: string, conferido: 'Sim' | '-'
   const currentReceipts = getStoredReceipts();
   const currentItems = getStoredItems();
   const confStatus: 'Sim' | '-' = conferido === 'Sim' ? 'Sim' : '-';
+  const now = Date.now();
 
-  const existingIndex = currentReceipts.findIndex(r => r.id === receiptId);
-  let updatedReceipts: NFCeReceipt[];
-
-  if (existingIndex >= 0) {
-    updatedReceipts = currentReceipts.map(rcpt => {
-      if (rcpt.id === receiptId) {
-        return {
-          ...rcpt,
-          conferido: confStatus
-        };
-      }
-      return rcpt;
-    });
-  } else {
-    // If it was reconciled from items, find matching items and insert
-    const matchingItems = currentItems.filter(it => it.receiptId === receiptId);
-    const firstItem = matchingItems[0] || currentItems[0];
-    const newRcpt: NFCeReceipt = {
-      id: receiptId,
-      razaoSocial: firstItem?.razaoSocial || 'SENDAS DISTRIBUIDORA S/A',
-      data: firstItem?.data || new Date().toLocaleString('pt-BR'),
-      valorTotal: matchingItems.reduce((acc, it) => acc + (it.valorTotal || 0), 0),
-      itens: matchingItems,
-      scannedAt: new Date().toISOString(),
-      conferido: confStatus
-    };
-    updatedReceipts = [...currentReceipts, newRcpt];
+  // 1. Reconcile current receipts with items to ensure all active notes exist with valid IDs
+  const reconciled = reconcileReceiptsWithItems(currentReceipts, currentItems);
+  let targetReceipt = reconciled.find(r => r.id === receiptId);
+  if (!targetReceipt) {
+    targetReceipt = currentReceipts.find(r => r.id === receiptId);
   }
 
+  // 2. Update target in reconciled receipts list
+  const updatedReceipts = reconciled.map(rcpt => {
+    const isTarget = rcpt.id === receiptId || 
+      (targetReceipt && rcpt.data === targetReceipt.data && rcpt.razaoSocial === targetReceipt.razaoSocial);
+    if (isTarget) {
+      return {
+        ...rcpt,
+        conferido: confStatus,
+        conferidoUpdatedAt: now
+      };
+    }
+    return rcpt;
+  });
+
+  // 3. Ensure all items belonging to this receipt have receiptId set to prevent becoming orphaned
+  const targetId = targetReceipt?.id || receiptId;
+  const updatedItems = currentItems.map(item => {
+    const belongsToReceipt = item.receiptId === receiptId ||
+      item.receiptId === targetId ||
+      (targetReceipt && item.data === targetReceipt.data && item.razaoSocial === targetReceipt.razaoSocial);
+    if (belongsToReceipt && item.receiptId !== targetId) {
+      return {
+        ...item,
+        receiptId: targetId
+      };
+    }
+    return item;
+  });
+
   saveStoredReceipts(updatedReceipts);
-  return { items: currentItems, receipts: updatedReceipts };
+  saveStoredItems(updatedItems);
+  return { items: updatedItems, receipts: updatedReceipts };
+}
+
+/**
+ * Updates all receipts (or a specific list of receipt IDs) to 'Sim' or '-'
+ */
+export function bulkUpdateReceiptsConferido(conferido: 'Sim' | '-', receiptIds?: string[]): { items: NFCeItem[]; receipts: NFCeReceipt[] } {
+  const currentReceipts = getStoredReceipts();
+  const currentItems = getStoredItems();
+  const confStatus: 'Sim' | '-' = conferido === 'Sim' ? 'Sim' : '-';
+  const now = Date.now();
+
+  // Make sure all receipts currently represented are tracked
+  const reconciled = reconcileReceiptsWithItems(currentReceipts, currentItems);
+  const targetIdSet = receiptIds ? new Set(receiptIds) : null;
+
+  const updatedReceipts = reconciled.map(rcpt => {
+    if (!targetIdSet || targetIdSet.has(rcpt.id)) {
+      return {
+        ...rcpt,
+        conferido: confStatus,
+        conferidoUpdatedAt: now
+      };
+    }
+    return rcpt;
+  });
+
+  // Stamp receiptId onto all items so they never get separated
+  const receiptIdByGroup = new Map<string, string>();
+  reconciled.forEach(r => {
+    receiptIdByGroup.set(`${r.data}___${r.razaoSocial}`, r.id);
+  });
+
+  const updatedItems = currentItems.map(item => {
+    const key = `${item.data}___${item.razaoSocial}`;
+    const assignedId = receiptIdByGroup.get(key);
+    if (assignedId && (!item.receiptId || item.receiptId !== assignedId)) {
+      return { ...item, receiptId: assignedId };
+    }
+    return item;
+  });
+
+  saveStoredReceipts(updatedReceipts);
+  saveStoredItems(updatedItems);
+  return { items: updatedItems, receipts: updatedReceipts };
 }
 
 /**
  * Deletes a receipt and all its associated items from storage
  */
 export function deleteReceiptAndItsItems(receiptId: string): { items: NFCeItem[]; receipts: NFCeReceipt[] } {
+  return deleteMultipleReceiptsAndTheirItems([receiptId]);
+}
+
+/**
+ * Deletes multiple receipts and all their associated items from storage in bulk
+ */
+export function deleteMultipleReceiptsAndTheirItems(receiptIds: string[]): { items: NFCeItem[]; receipts: NFCeReceipt[] } {
+  if (!receiptIds || receiptIds.length === 0) {
+    return { items: getStoredItems(), receipts: getStoredReceipts() };
+  }
+
+  const targetIdSet = new Set(receiptIds);
   const currentReceipts = getStoredReceipts();
   const currentItems = getStoredItems();
 
-  const targetReceipt = currentReceipts.find(r => r.id === receiptId);
-  const updatedReceipts = currentReceipts.filter(r => r.id !== receiptId);
+  const targetReceipts = currentReceipts.filter(r => targetIdSet.has(r.id));
+  const targetDateStoreKeys = new Set(targetReceipts.map(r => `${r.data}___${r.razaoSocial}`));
 
-  // Filter out items belonging to this receipt
+  const updatedReceipts = currentReceipts.filter(r => !targetIdSet.has(r.id));
+
+  // Filter out items belonging to these receipts
   const updatedItems = currentItems.filter(item => {
-    if (item.receiptId && item.receiptId === receiptId) return false;
-    if (targetReceipt && item.data === targetReceipt.data && item.razaoSocial === targetReceipt.razaoSocial) {
+    if (item.receiptId && targetIdSet.has(item.receiptId)) return false;
+    if (targetDateStoreKeys.has(`${item.data}___${item.razaoSocial}`)) {
       return false;
     }
     return true;
@@ -1004,14 +1072,20 @@ export function parseDateToTimestamp(dateStr?: string): number {
 export function reconcileReceiptsWithItems(receipts: NFCeReceipt[], items: NFCeItem[]): NFCeReceipt[] {
   if (items.length === 0) return [];
 
-  // Map existing receipts by ID
+  // Map existing receipts by ID and by composite key (data + razaoSocial)
   const receiptMap = new Map<string, NFCeReceipt>();
+  const receiptByKey = new Map<string, NFCeReceipt>();
+
   receipts.forEach(rcpt => {
-    receiptMap.set(rcpt.id, {
+    const sanitized: NFCeReceipt = {
       ...rcpt,
       conferido: rcpt.conferido === 'Sim' ? 'Sim' : '-',
       itens: [] // will populate strictly from active items
-    });
+    };
+    receiptMap.set(rcpt.id, sanitized);
+    if (rcpt.data && rcpt.razaoSocial) {
+      receiptByKey.set(`${rcpt.data}___${rcpt.razaoSocial}`, sanitized);
+    }
   });
 
   // Group items by receiptId or (data + razaoSocial)
@@ -1022,11 +1096,16 @@ export function reconcileReceiptsWithItems(receipts: NFCeReceipt[], items: NFCeI
       const rcpt = receiptMap.get(item.receiptId)!;
       rcpt.itens.push(item);
     } else {
-      const groupKey = item.receiptId || `${item.data || 'Sem Data'}___${item.razaoSocial || 'Estabelecimento'}`;
-      if (!orphanGroups.has(groupKey)) {
-        orphanGroups.set(groupKey, []);
+      const groupKey = `${item.data || 'Sem Data'}___${item.razaoSocial || 'Estabelecimento'}`;
+      if (receiptByKey.has(groupKey)) {
+        const rcpt = receiptByKey.get(groupKey)!;
+        rcpt.itens.push(item);
+      } else {
+        if (!orphanGroups.has(groupKey)) {
+          orphanGroups.set(groupKey, []);
+        }
+        orphanGroups.get(groupKey)!.push(item);
       }
-      orphanGroups.get(groupKey)!.push(item);
     }
   });
 
@@ -1043,7 +1122,8 @@ export function reconcileReceiptsWithItems(receipts: NFCeReceipt[], items: NFCeI
       valorTotal: totalVal,
       itens: groupItems,
       scannedAt: existing?.scannedAt || new Date().toISOString(),
-      conferido: existing?.conferido === 'Sim' ? 'Sim' : '-'
+      conferido: existing?.conferido === 'Sim' ? 'Sim' : '-',
+      conferidoUpdatedAt: existing?.conferidoUpdatedAt
     };
     receiptMap.set(newRcpt.id, newRcpt);
   });

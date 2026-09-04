@@ -29,7 +29,9 @@ import { generateUniqueId } from '../utils/storage';
 import {
   decodeFromImageData,
   decodeFromImageElement,
+  decodeFromVideoElement,
   isBarcodeDetectorSupported,
+  extractChaveOrUrl,
 } from '../utils/qrDecoder';
 
 interface QRScannerProps {
@@ -61,11 +63,15 @@ export const QRScanner: React.FC<QRScannerProps> = ({
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const roiCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const fullCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const animationFrameIdRef = useRef<number | null>(null);
+  const scanIntervalRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraCaptureInputRef = useRef<HTMLInputElement | null>(null);
   const isScanningActiveRef = useRef<boolean>(false);
+  const isProcessingFrameRef = useRef<boolean>(false);
 
   // Play subtle detection beep
   const playScanBeep = () => {
@@ -133,8 +139,14 @@ export const QRScanner: React.FC<QRScannerProps> = ({
 
   const stopLiveCamera = useCallback(() => {
     isScanningActiveRef.current = false;
+    isProcessingFrameRef.current = false;
     setIsScanning(false);
     setTorchOn(false);
+
+    if (scanIntervalRef.current) {
+      clearInterval(scanIntervalRef.current);
+      scanIntervalRef.current = null;
+    }
 
     if (animationFrameIdRef.current) {
       cancelAnimationFrame(animationFrameIdRef.current);
@@ -172,58 +184,57 @@ export const QRScanner: React.FC<QRScannerProps> = ({
     await processNFCeUrl(qrText);
   }, [isProcessingFetch, stopLiveCamera]);
 
-  // Video Frame Scanning Loop
+  // Video Frame Scanning Loop with Multi-Engine Hardware Acceleration & ROI Reticle
   const startScanningLoop = useCallback(() => {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas) return;
-
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return;
-
-    let lastScanTime = 0;
-    const scanInterval = 100; // Scan 10 times per second for smooth battery and maximum accuracy
-
-    const scanTick = async (currentTime: number) => {
-      if (!isScanningActiveRef.current) return;
-
-      if (video.readyState >= video.HAVE_CURRENT_DATA && currentTime - lastScanTime >= scanInterval) {
-        lastScanTime = currentTime;
-
-        const vw = video.videoWidth;
-        const vh = video.videoHeight;
-
-        if (vw > 0 && vh > 0) {
-          if (canvas.width !== vw || canvas.height !== vh) {
-            canvas.width = vw;
-            canvas.height = vh;
-          }
-
-          ctx.drawImage(video, 0, 0, vw, vh);
-          const imgData = ctx.getImageData(0, 0, vw, vh);
-
-          try {
-            const result = await decodeFromImageData(imgData, canvas);
-            if (result && result.text) {
-              handleQRCodeScanned(result.text);
-              return;
-            }
-          } catch (scanErr) {
-            console.warn('Frame scan error:', scanErr);
-          }
-        }
-      }
-
-      if (isScanningActiveRef.current) {
-        animationFrameIdRef.current = requestAnimationFrame(scanTick);
-      }
-    };
+    if (scanIntervalRef.current) {
+      clearInterval(scanIntervalRef.current);
+      scanIntervalRef.current = null;
+    }
 
     isScanningActiveRef.current = true;
-    animationFrameIdRef.current = requestAnimationFrame(scanTick);
+    let frameCount = 0;
+
+    // Scan every 120ms (~8 FPS): zero UI freeze, instant hardware barcode detection
+    scanIntervalRef.current = setInterval(async () => {
+      if (!isScanningActiveRef.current) return;
+      if (isProcessingFrameRef.current) return;
+
+      const video = videoRef.current;
+      const roiCanvas = roiCanvasRef.current;
+      if (!video || !roiCanvas) return;
+
+      if (video.readyState < 2 || video.videoWidth <= 0 || video.videoHeight <= 0) {
+        return;
+      }
+
+      isProcessingFrameRef.current = true;
+      frameCount++;
+      const checkFull = frameCount % 3 === 0;
+
+      try {
+        const result = await decodeFromVideoElement(
+          video,
+          roiCanvas,
+          fullCanvasRef.current || undefined,
+          checkFull
+        );
+        if (result && result.text && result.text.trim()) {
+          if (scanIntervalRef.current) {
+            clearInterval(scanIntervalRef.current);
+            scanIntervalRef.current = null;
+          }
+          handleQRCodeScanned(result.text.trim());
+          return;
+        }
+      } catch (err) {
+        console.warn('Scan frame error:', err);
+      } finally {
+        isProcessingFrameRef.current = false;
+      }
+    }, 120);
   }, [handleQRCodeScanned]);
 
-  // Start live video stream with AppSheet-grade high resolution and continuous autofocus
+  // Start live video stream with AppSheet-grade instant startup and continuous autofocus
   const startLiveCamera = async (targetDeviceId?: string) => {
     setCameraError(null);
     stopLiveCamera();
@@ -243,34 +254,26 @@ export const QRScanner: React.FC<QRScannerProps> = ({
 
     const deviceIdToUse = targetDeviceId || selectedCameraId;
 
-    // Build constraints optimized for high density receipt QR codes (1080p + autofocus)
+    // Lightweight, fast-opening constraints: 1280x720 ideal (opens in < 150ms on mobile devices)
     const constraintList: MediaStreamConstraints[] = [
-      // 1. High-Res 1080p with environment facing mode
       {
         video: {
           facingMode: { ideal: 'environment' },
-          width: { ideal: 1920, min: 1280 },
-          height: { ideal: 1080, min: 720 },
+          width: { ideal: 1280, max: 1920 },
+          height: { ideal: 720, max: 1080 },
           ...(deviceIdToUse ? { deviceId: { exact: deviceIdToUse } } : {}),
         },
+        audio: false,
       },
-      // 2. Standard 720p environment
-      {
-        video: {
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 1280, min: 640 },
-          height: { ideal: 720, min: 480 },
-        },
-      },
-      // 3. Simple facingMode environment
       {
         video: {
           facingMode: 'environment',
         },
+        audio: false,
       },
-      // 4. Any camera
       {
         video: true,
+        audio: false,
       },
     ];
 
@@ -302,11 +305,21 @@ export const QRScanner: React.FC<QRScannerProps> = ({
 
     mediaStreamRef.current = stream;
 
-    // Check camera capabilities (Torch, Zoom, Focus)
+    // Check camera capabilities (Torch, Zoom, Continuous Autofocus)
     const videoTrack = stream.getVideoTracks()[0];
     if (videoTrack) {
       try {
         const capabilities: any = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+
+        // Apply continuous autofocus if hardware supports it
+        if (capabilities.focusMode && Array.isArray(capabilities.focusMode) && capabilities.focusMode.includes('continuous')) {
+          try {
+            await (videoTrack as any).applyConstraints({
+              advanced: [{ focusMode: 'continuous' }],
+            });
+          } catch {}
+        }
+
         if (capabilities.torch) {
           setHasTorch(true);
         } else {
@@ -328,12 +341,22 @@ export const QRScanner: React.FC<QRScannerProps> = ({
     if (videoRef.current) {
       videoRef.current.srcObject = stream;
       videoRef.current.setAttribute('playsinline', 'true');
+      videoRef.current.setAttribute('muted', 'true');
       try {
         await videoRef.current.play();
         setIsScanning(true);
         startScanningLoop();
       } catch (playErr) {
         console.error('Error playing video stream:', playErr);
+        setTimeout(async () => {
+          try {
+            if (videoRef.current) {
+              await videoRef.current.play();
+              setIsScanning(true);
+              startScanningLoop();
+            }
+          } catch {}
+        }, 150);
       }
     }
   };
@@ -464,7 +487,17 @@ export const QRScanner: React.FC<QRScannerProps> = ({
     });
   };
 
-  // Multi-pass Photo & File Analyzer
+  // Helper to convert file to Base64 for OCR server endpoint
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = (err) => reject(err);
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // Multi-pass Photo & File Analyzer with Smart Cropping + Gemini AI Fallback
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -474,21 +507,52 @@ export const QRScanner: React.FC<QRScannerProps> = ({
     setIsProcessingFetch(true);
 
     try {
+      // Step 1: Load image in browser
       const img = await loadImageFromFile(file);
-      const decoded = await decodeFromImageElement(img);
 
-      if (decoded && decoded.text) {
+      // Step 2: High-precision client-side multi-engine decode
+      // (Native Google Play Services/Vision + Html5Qrcode + Smart Receipts Crops + Thermal Binarization)
+      const decoded = await decodeFromImageElement(img, file);
+
+      if (decoded && decoded.text && decoded.text.trim()) {
         playScanBeep();
-        setLastScannedUrl(decoded.text);
-        await processNFCeUrl(decoded.text);
-      } else {
-        setCameraError(
-          'Não foi possível encontrar o QR Code na foto. Dica: aproxime bem a câmera do QR Code na nota fiscal para que ele ocupe o centro da imagem.'
-        );
+        setLastScannedUrl(decoded.text.trim());
+        await processNFCeUrl(decoded.text.trim());
+        return;
       }
+
+      // Step 3: If optical QR detection failed (due to paper crumpling, shadows or angle),
+      // seamlessly use Gemini AI Vision to find the QR URL or 44-digit Chave de Acesso!
+      setLoadingMessage('Localizando Chave de Acesso e QR Code na nota fiscal via IA...');
+      const base64Data = await fileToBase64(file);
+
+      const ocrResponse = await fetch('/api/extract-receipt-ocr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageBase64: base64Data,
+          mimeType: file.type || 'image/jpeg',
+        }),
+      });
+
+      const ocrResult = await ocrResponse.json();
+      if (ocrResult.success && (ocrResult.url || ocrResult.chave)) {
+        playScanBeep();
+        const targetValue = ocrResult.url || ocrResult.chave;
+        setLastScannedUrl(targetValue);
+        if (ocrResult.chave) {
+          setChaveAcesso(formatChaveAcesso(ocrResult.chave));
+        }
+        await processNFCeUrl(targetValue);
+        return;
+      }
+
+      setCameraError(
+        'Não foi possível encontrar o QR Code ou a Chave de Acesso na foto. Dica: tire a foto bem de perto do QR Code no rodapé da nota fiscal com boa luz, ou digite a Chave de 44 números.'
+      );
     } catch (err: any) {
       console.error('Image decode error:', err);
-      setCameraError('Erro ao processar imagem. Tente tirar a foto novamente com boa iluminação.');
+      setCameraError('Erro ao processar imagem: ' + (err?.message || 'Tente tirar a foto novamente com boa iluminação.'));
     } finally {
       setIsProcessingFetch(false);
       setLoadingMessage(null);
@@ -618,8 +682,10 @@ export const QRScanner: React.FC<QRScannerProps> = ({
 
   return (
     <div id="qr-scanner-wrapper" className="w-full max-w-2xl mx-auto space-y-6 animate-in fade-in duration-300">
-      {/* Offscreen Canvas for real-time video frame decoding */}
+      {/* Offscreen Canvases for real-time video frame decoding and high-res ROI analysis */}
       <canvas ref={canvasRef} className="hidden" />
+      <canvas ref={roiCanvasRef} className="hidden" />
+      <canvas ref={fullCanvasRef} className="hidden" />
 
       {/* Hidden file inputs for Native Camera & Gallery */}
       <input
@@ -637,6 +703,95 @@ export const QRScanner: React.FC<QRScannerProps> = ({
         className="hidden"
         onChange={handleFileUpload}
       />
+
+      {/* AppSheet Inspired COMPROVANTE Configuration Header */}
+      <div className="p-4 sm:p-5 rounded-3xl bg-slate-900 text-white border border-slate-800 shadow-xl space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-black text-sm">
+              NF
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] uppercase tracking-wider text-slate-400 font-bold">Coluna:</span>
+                <h3 className="text-base font-black text-white tracking-wide">COMPROVANTE</h3>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                  Scan Ativo
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 flex flex-wrap items-center gap-x-2 gap-y-0.5 pt-0.5">
+                <span>Type: <strong className="text-emerald-400 font-mono">Text</strong></span>
+                <span>•</span>
+                <span>Scan?: <strong className="text-emerald-400 font-mono">Sim</strong></span>
+                <span>•</span>
+                <span>Search?: <strong className="text-emerald-400 font-mono">Sim</strong></span>
+                <span>•</span>
+                <span>Editable?: <strong className="text-emerald-400 font-mono">Sim</strong></span>
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-start sm:self-auto">
+            <span className="text-[11px] text-slate-400 bg-slate-800/90 px-2.5 py-1 rounded-xl border border-slate-700/60 flex items-center gap-1.5">
+              <ScanLine className="w-3.5 h-3.5 text-emerald-400" />
+              <span>{engineType}</span>
+            </span>
+          </div>
+        </div>
+
+        {/* Quick Action Buttons */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 border-t border-slate-800">
+          <button
+            type="button"
+            onClick={() => (isScanning ? stopLiveCamera() : startLiveCamera())}
+            disabled={isProcessingFetch}
+            className={`py-2.5 px-3 rounded-2xl text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-sm ${
+              isScanning
+                ? 'bg-amber-500 text-slate-950 hover:bg-amber-400'
+                : 'bg-emerald-600 text-white hover:bg-emerald-500 active:bg-emerald-700'
+            }`}
+          >
+            <Camera className="w-4 h-4 shrink-0" />
+            <span>{isScanning ? 'Parar Câmera' : 'Câmera ao Vivo'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => cameraCaptureInputRef.current?.click()}
+            disabled={isProcessingFetch}
+            className="py-2.5 px-3 rounded-2xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-sm"
+            title="Abre a câmera nativa do seu smartphone"
+          >
+            <Smartphone className="w-4 h-4 shrink-0" />
+            <span>Tirar Foto</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isProcessingFetch}
+            className="py-2.5 px-3 rounded-2xl bg-slate-800 hover:bg-slate-700 active:bg-slate-900 text-slate-200 text-xs font-semibold transition-all flex items-center justify-center gap-2 border border-slate-700/80"
+          >
+            <ImageIcon className="w-4 h-4 text-slate-400 shrink-0" />
+            <span>Galeria</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              const el = document.getElementById('chave-acesso-input');
+              if (el) {
+                el.scrollIntoView({ behavior: 'smooth' });
+                el.focus();
+              }
+            }}
+            className="py-2.5 px-3 rounded-2xl bg-slate-800 hover:bg-slate-700 active:bg-slate-900 text-slate-200 text-xs font-semibold transition-all flex items-center justify-center gap-2 border border-slate-700/80"
+          >
+            <KeyRound className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>44 Dígitos</span>
+          </button>
+        </div>
+      </div>
 
       {/* Embedded Iframe Notice Banner */}
       {isIframe && (

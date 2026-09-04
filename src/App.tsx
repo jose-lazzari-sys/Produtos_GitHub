@@ -26,7 +26,9 @@ import {
   saveStoredItems,
   saveStoredReceipts,
   updateReceiptConferido,
+  bulkUpdateReceiptsConferido,
   deleteReceiptAndItsItems,
+  deleteMultipleReceiptsAndTheirItems,
   reconcileReceiptsWithItems
 } from './utils/storage';
 import { 
@@ -364,12 +366,29 @@ export default function App() {
   const handleUpdateReceiptConferido = (receiptId: string, conferido: 'Sim' | '-') => {
     const result = updateReceiptConferido(receiptId, conferido);
     setReceipts(result.receipts);
-    syncChangesToCloud(items, result.receipts);
+    setItems(result.items);
+    syncChangesToCloud(result.items, result.receipts);
+  };
+
+  // Bulk update all receipts conferido status ('Sim' | '-')
+  const handleBulkUpdateConferido = (conferido: 'Sim' | '-') => {
+    const result = bulkUpdateReceiptsConferido(conferido);
+    setReceipts(result.receipts);
+    setItems(result.items);
+    syncChangesToCloud(result.items, result.receipts);
   };
 
   // Delete a receipt and its items
   const handleDeleteReceipt = (receiptId: string) => {
     const result = deleteReceiptAndItsItems(receiptId);
+    setItems(result.items);
+    setReceipts(result.receipts);
+    syncChangesToCloud(result.items, result.receipts);
+  };
+
+  // Delete multiple receipts and their items in bulk
+  const handleDeleteMultipleReceipts = (receiptIds: string[]) => {
+    const result = deleteMultipleReceiptsAndTheirItems(receiptIds);
     setItems(result.items);
     setReceipts(result.receipts);
     syncChangesToCloud(result.items, result.receipts);
@@ -609,7 +628,9 @@ export default function App() {
             receipts={reconciledReceipts}
             items={items}
             onUpdateReceiptConferido={handleUpdateReceiptConferido}
+            onBulkUpdateConferido={handleBulkUpdateConferido}
             onDeleteReceipt={handleDeleteReceipt}
+            onDeleteMultipleReceipts={handleDeleteMultipleReceipts}
             onViewItemsInReport={() => setActiveTab('report')}
             onSwitchToScanner={() => setActiveTab('scanner')}
           />

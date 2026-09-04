@@ -2,10 +2,20 @@ import express from 'express';
 import path from 'path';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
+import { GoogleGenAI } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
 
 const app = express();
 const PORT = 3000;
+
+// Lazy initialized Gemini client
+let aiClient: GoogleGenAI | null = null;
+function getAi(): GoogleGenAI {
+  if (!aiClient) {
+    aiClient = new GoogleGenAI({});
+  }
+  return aiClient;
+}
 
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
@@ -490,6 +500,83 @@ app.post('/api/parse-nfce', async (req, res) => {
       success: false,
       needsManualInput: true,
       errorMessage: 'Erro interno ao processar nota fiscal: ' + (err.message || 'Erro desconhecido')
+    });
+  }
+});
+
+// AI OCR Endpoint for photos of receipts where optical QR is faded, crumpled or angled
+app.post('/api/extract-receipt-ocr', async (req, res) => {
+  try {
+    const { imageBase64, mimeType = 'image/jpeg' } = req.body;
+    if (!imageBase64) {
+      return res.status(400).json({ success: false, errorMessage: 'Imagem não fornecida' });
+    }
+
+    const ai = getAi();
+    const cleanBase64 = imageBase64.replace(/^data:image\/[a-zA-Z+]+;base64,/, '');
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              inlineData: {
+                data: cleanBase64,
+                mimeType: mimeType || 'image/jpeg'
+              }
+            },
+            {
+              text: `Você é um leitor especializado em Cupons Fiscais Eletrônicos (NFC-e / SAT / Danfe) do Brasil (especialmente Estado de São Paulo - Sefaz SP).
+Analise a imagem da nota fiscal e extraia com máxima precisão:
+1) A URL completa do QR Code da NFC-e (geralmente começa com https://www.nfce.fazenda.sp.gov.br/qrcode?p=... ou http://.../qrcode?p=...)
+2) E/OU a "CHAVE DE ACESSO" de 44 dígitos numéricos (geralmente impressa no rodapé ou ao lado do QR Code em blocos como '3526 0814 5691 9100...').
+Retorne EXCLUSIVAMENTE um objeto JSON válido no formato:
+{
+  "url": "URL completa se encontrada ou null",
+  "chave": "44 dígitos numéricos sem espaços ou traços, ou null",
+  "razaoSocial": "nome do mercado se visível ou null"
+}`
+            }
+          ]
+        }
+      ],
+      config: {
+        responseMimeType: 'application/json'
+      }
+    });
+
+    const text = response.text?.trim() || '{}';
+    let parsed: any = {};
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      const match = text.match(/\{[\s\S]*\}/);
+      if (match) parsed = JSON.parse(match[0]);
+    }
+
+    const chave = parsed.chave ? String(parsed.chave).replace(/\D/g, '') : null;
+    const url = parsed.url && typeof parsed.url === 'string' && parsed.url.startsWith('http') ? parsed.url : null;
+
+    if (url || (chave && chave.length === 44)) {
+      return res.json({
+        success: true,
+        url: url,
+        chave: chave && chave.length === 44 ? chave : null,
+        razaoSocial: parsed.razaoSocial || null
+      });
+    }
+
+    return res.json({
+      success: false,
+      errorMessage: 'Não foi possível encontrar a Chave de Acesso (44 números) ou o Link QR Code na foto do cupom.'
+    });
+  } catch (err: any) {
+    console.error('Extract receipt OCR exception:', err);
+    return res.status(500).json({
+      success: false,
+      errorMessage: 'Erro ao processar imagem com IA: ' + (err.message || 'Erro desconhecido')
     });
   }
 });

@@ -26,7 +26,12 @@ import {
   Database,
   Upload,
   FileDown,
-  FileUp
+  FileUp,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  RotateCcw
 } from 'lucide-react';
 import { NFCeItem, NFCeReceipt } from '../types';
 import { formatBRL } from '../utils/nfceParser';
@@ -78,6 +83,10 @@ export const ReportTable: React.FC<ReportTableProps> = ({
   const [sortField, setSortField] = useState<'num' | 'valorTotal' | 'data' | 'descricao' | 'precoPorKg'>('data');
   const [sortAsc, setSortAsc] = useState(false);
 
+  // Pagination State (50 items per page by default to maintain blazing fast performance with 1000+ items)
+  const [pageSize, setPageSize] = useState<number>(50);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+
   // Store Name Batch Modal state
   const [isStoreModalOpen, setIsStoreModalOpen] = useState(false);
   const [customStoreName, setCustomStoreName] = useState('SENDAS DISTRIBUIDORA S/A');
@@ -111,19 +120,30 @@ export const ReportTable: React.FC<ReportTableProps> = ({
     });
   }, [searchFilteredBaseItems, selectedTipo]);
 
+  // Total BRL of items matching current Tipo and search query
+  const totalTipoBusca = useMemo(
+    () => itemsMatchingSearchAndTipo.reduce((sum, it) => sum + (it.valorTotal || 0), 0),
+    [itemsMatchingSearchAndTipo]
+  );
+
   // Available subcategory produtos present in items that meet active criteria (Tipo and Search Query)
   const availableProdutosWithStats = useMemo(() => {
-    const countsMap: Record<string, number> = {};
+    const statsMap: Record<string, { count: number; total: number }> = {};
 
     itemsMatchingSearchAndTipo.forEach((item) => {
       const prod = item.produto?.trim() || 'Outros';
-      countsMap[prod] = (countsMap[prod] || 0) + 1;
+      if (!statsMap[prod]) {
+        statsMap[prod] = { count: 0, total: 0 };
+      }
+      statsMap[prod].count += 1;
+      statsMap[prod].total += (item.valorTotal || 0);
     });
 
-    const sortedProds = Object.keys(countsMap).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    const sortedProds = Object.keys(statsMap).sort((a, b) => a.localeCompare(b, 'pt-BR'));
     return sortedProds.map((prod) => ({
       produto: prod,
-      count: countsMap[prod],
+      count: statsMap[prod].count,
+      total: statsMap[prod].total,
     }));
   }, [itemsMatchingSearchAndTipo]);
 
@@ -252,6 +272,124 @@ export const ReportTable: React.FC<ReportTableProps> = ({
 
     return counts;
   }, [searchFilteredBaseItems]);
+
+  // Auto-reset current page to 1 when filters, search query, sorting, or page size change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedTipo, selectedProduto, searchQuery, sortField, sortAsc, pageSize]);
+
+  // Pagination calculations
+  const totalItemsCount = filteredItems.length;
+  const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(totalItemsCount / pageSize));
+  const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
+
+  const paginatedItems = useMemo(() => {
+    if (pageSize === 0) return filteredItems;
+    const startIndex = (safeCurrentPage - 1) * pageSize;
+    return filteredItems.slice(startIndex, startIndex + pageSize);
+  }, [filteredItems, safeCurrentPage, pageSize]);
+
+  const startIndex = pageSize === 0 ? 0 : (safeCurrentPage - 1) * pageSize;
+  const endIndex = pageSize === 0 ? totalItemsCount : Math.min(startIndex + pageSize, totalItemsCount);
+
+  // Reusable Pagination Bar Component
+  const renderPaginationBar = (position: 'top' | 'bottom') => {
+    if (totalItemsCount === 0) return null;
+
+    return (
+      <div 
+        className={`px-4 py-2.5 bg-slate-50/95 dark:bg-slate-900/95 border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs ${
+          position === 'top' ? 'border-b' : 'border-t'
+        }`}
+      >
+        {/* Left: Item Counters */}
+        <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
+          <span>
+            Mostrando{' '}
+            <strong className="text-slate-900 dark:text-white font-bold">
+              {pageSize === 0 ? `todos os ${totalItemsCount}` : `${startIndex + 1}–${endIndex}`}
+            </strong>{' '}
+            de{' '}
+            <strong className="text-slate-900 dark:text-white font-bold">{totalItemsCount}</strong> itens
+            {isFiltered && items.length !== totalItemsCount && (
+              <span className="text-slate-400 dark:text-slate-500 ml-1">
+                (de {items.length} totais)
+              </span>
+            )}
+          </span>
+        </div>
+
+        {/* Right: Page Size & Nav Buttons */}
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <span className="text-slate-500 dark:text-slate-400">Por pág:</span>
+            <select
+              id={`page-size-select-${position}`}
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value));
+                setCurrentPage(1);
+              }}
+              className="h-8 px-2 py-0.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 font-semibold text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-emerald-500 cursor-pointer text-xs"
+            >
+              <option value={50}>50 itens</option>
+              <option value={100}>100 itens</option>
+              <option value={250}>250 itens</option>
+              <option value={0}>Todos ({totalItemsCount})</option>
+            </select>
+          </div>
+
+          {pageSize > 0 && totalPages > 1 && (
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setCurrentPage(1)}
+                disabled={safeCurrentPage === 1}
+                title="Primeira Página"
+                className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors"
+              >
+                <ChevronsLeft className="w-4 h-4" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={safeCurrentPage === 1}
+                title="Página Anterior"
+                className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+
+              <span className="px-2 font-medium text-slate-700 dark:text-slate-300 text-xs">
+                Pág. <strong className="text-emerald-700 dark:text-emerald-400 font-bold">{safeCurrentPage}</strong> de {totalPages}
+              </span>
+
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={safeCurrentPage === totalPages}
+                title="Próxima Página"
+                className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setCurrentPage(totalPages)}
+                disabled={safeCurrentPage === totalPages}
+                title="Última Página"
+                className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors"
+              >
+                <ChevronsRight className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   // Copy to Google Sheets (TSV format)
   const handleCopyToSheets = async () => {
@@ -546,7 +684,7 @@ export const ReportTable: React.FC<ReportTableProps> = ({
               </p>
             </div>
 
-            {/* Quick Actions & Navigation to Tab 3 */}
+            {/* Quick Actions & Navigation to Tab 4 */}
             <div className="flex flex-wrap items-center gap-2.5">
               {onSwitchToActions && (
                 <button
@@ -556,7 +694,7 @@ export const ReportTable: React.FC<ReportTableProps> = ({
                   className="py-2.5 px-4 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/80 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 text-xs sm:text-sm font-bold shadow-xs transition-colors flex items-center gap-2 min-h-[42px] cursor-pointer"
                 >
                   <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                  <span>3. Ações do App (Exportar / Backup)</span>
+                  <span>4. Ações do App (Exportar / Backup)</span>
                 </button>
               )}
             </div>
@@ -589,12 +727,60 @@ export const ReportTable: React.FC<ReportTableProps> = ({
             </div>
           )}
 
-          {/* Filter Tabs by Tipo (Large mobile-friendly tab pills) */}
-          <div className="space-y-2">
+          {/* Search Bar & Quick Reset Area */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 pt-1">
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                id="search-items-input"
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Buscar por descrição, mercado ou data..."
+                className="w-full pl-10 pr-9 h-10 text-xs sm:text-sm bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-hidden transition-all shadow-xs"
+              />
+              {searchQuery.trim().length > 0 && (
+                <button
+                  type="button"
+                  id="clear-search-button"
+                  onClick={() => setSearchQuery('')}
+                  title="Limpar busca"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            {isFiltered && (
+              <button
+                type="button"
+                id="clear-all-filters-btn"
+                onClick={() => {
+                  setSelectedTipo('Todos');
+                  setSelectedProduto('Todos');
+                  setSearchQuery('');
+                }}
+                className="h-10 px-3.5 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/60 text-xs font-bold transition-colors flex items-center justify-center gap-1.5 shadow-xs cursor-pointer shrink-0"
+                title="Redefinir todos os filtros de busca, tipo e produto"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Limpar Filtros</span>
+              </button>
+            )}
+          </div>
+
+          {/* Filter 1: Tabs by Tipo */}
+          <div className="space-y-2 pt-1">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                <Filter className="w-3.5 h-3.5" />
-                Filtrar por Tipo
+                <Filter className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                <span>1. Filtrar por Tipo</span>
+                {selectedTipo !== 'Todos' && (
+                  <span className="text-[11px] font-normal text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800">
+                    Ativo: {selectedTipo}
+                  </span>
+                )}
               </span>
 
               {items.length === 0 && (
@@ -609,12 +795,11 @@ export const ReportTable: React.FC<ReportTableProps> = ({
               )}
             </div>
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-1.5 sm:gap-2">
               {TIPO_OPTIONS.map((tipo) => {
                 const isSelected = selectedTipo === tipo;
                 const count = tipo === 'Todos' ? searchFilteredBaseItems.length : (statsByTipo[tipo]?.count || 0);
                 const total = tipo === 'Todos' ? totalBaseBusca : (statsByTipo[tipo]?.total || 0);
-
                 const percent = totalBaseBusca > 0 ? (total / totalBaseBusca) * 100 : 0;
 
                 return (
@@ -625,9 +810,9 @@ export const ReportTable: React.FC<ReportTableProps> = ({
                       setSelectedTipo(tipo);
                       setSelectedProduto('Todos');
                     }}
-                    className={`py-2 px-3.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 sm:gap-2 min-h-[40px] touch-manipulation ${
+                    className={`py-2 px-3 sm:px-3.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 sm:gap-2 min-h-[40px] touch-manipulation cursor-pointer ${
                       isSelected
-                        ? 'bg-emerald-600 text-white shadow-md'
+                        ? 'bg-emerald-600 text-white shadow-md border border-emerald-600'
                         : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'
                     }`}
                   >
@@ -653,7 +838,7 @@ export const ReportTable: React.FC<ReportTableProps> = ({
 
                     {/* Count badge */}
                     <span
-                      className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+                      className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
                         isSelected
                           ? 'bg-emerald-700 text-emerald-100'
                           : 'bg-slate-100 dark:bg-slate-900 text-slate-500 dark:text-slate-400'
@@ -674,62 +859,180 @@ export const ReportTable: React.FC<ReportTableProps> = ({
             </div>
           </div>
 
-          {/* Sub-Filters: Search input, Produto filter, and Action buttons */}
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pt-1">
-            {/* Left/Center Filters: Search + Produto */}
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 flex-1">
-              {/* Search */}
-              <div className="relative flex-1 min-w-[220px]">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
-                  id="search-items-input"
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Buscar item, mercado ou data..."
-                  className="w-full pl-10 pr-9 h-10 text-xs sm:text-sm bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-hidden transition-all shadow-xs"
-                />
-                {searchQuery.trim().length > 0 && (
-                  <button
-                    type="button"
-                    id="clear-search-button"
-                    onClick={() => setSearchQuery('')}
-                    title="Limpar busca"
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+          {/* Filter 2: Buttons by Produto (*1 - Exibição em botões responsivos) */}
+          <div className="space-y-2 pt-1 border-t border-slate-200/60 dark:border-slate-800/60">
+            <div className="flex flex-wrap items-center justify-between gap-1.5">
+              <span className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                <Tag className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                <span>2. Filtrar por Produto</span>
+                <span className="text-[11px] font-normal text-slate-500 dark:text-slate-400">
+                  {selectedTipo !== 'Todos'
+                    ? `(Produtos de "${selectedTipo}" • ${availableProdutosWithStats.length} opções)`
+                    : `(${availableProdutosWithStats.length} opções disponíveis)`}
+                </span>
+              </span>
+
+              {selectedProduto !== 'Todos' && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedProduto('Todos')}
+                  className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 font-semibold cursor-pointer"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>Ver todos os produtos</span>
+                </button>
+              )}
+            </div>
+
+            {/* Product buttons list */}
+            {availableProdutosWithStats.length === 0 ? (
+              <div className="p-3 text-xs text-slate-400 italic bg-white dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800">
+                Nenhum produto correspondente aos filtros selecionados.
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-1.5 sm:gap-2">
+                {/* Button "Todos os Produtos" */}
+                <button
+                  type="button"
+                  id="filter-produto-todos-btn"
+                  onClick={() => setSelectedProduto('Todos')}
+                  className={`py-1.5 sm:py-2 px-3 sm:px-3.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 sm:gap-2 min-h-[38px] touch-manipulation cursor-pointer ${
+                    selectedProduto === 'Todos'
+                      ? 'bg-blue-600 text-white shadow-md border border-blue-600'
+                      : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-blue-50 dark:hover:bg-slate-700/80 hover:border-blue-300'
+                  }`}
+                >
+                  <span>Todos os Produtos</span>
+                  <span
+                    className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                      selectedProduto === 'Todos'
+                        ? 'bg-blue-700 text-blue-100'
+                        : 'bg-slate-100 dark:bg-slate-900 text-slate-500 dark:text-slate-400'
+                    }`}
                   >
-                    <X className="w-4 h-4" />
-                  </button>
+                    {itemsMatchingSearchAndTipo.length}
+                  </span>
+                  {totalTipoBusca > 0 && (
+                    <span className={`text-[10px] hidden sm:inline ${selectedProduto === 'Todos' ? 'text-blue-200' : 'text-slate-400'}`}>
+                      ({formatBRL(totalTipoBusca)})
+                    </span>
+                  )}
+                </button>
+
+                {/* Buttons for each available product matching active Tipo and Search */}
+                {availableProdutosWithStats.map(({ produto, count, total }) => {
+                  const isSelected = selectedProduto === produto;
+                  return (
+                    <button
+                      key={produto}
+                      id={`filter-produto-${produto.toLowerCase().replace(/\s+/g, '-')}`}
+                      type="button"
+                      onClick={() => setSelectedProduto(isSelected ? 'Todos' : produto)}
+                      className={`py-1.5 sm:py-2 px-3 sm:px-3.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 sm:gap-2 min-h-[38px] touch-manipulation cursor-pointer ${
+                        isSelected
+                          ? 'bg-blue-600 text-white shadow-md border border-blue-600'
+                          : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-blue-50 dark:hover:bg-slate-700/80 hover:border-blue-300'
+                      }`}
+                      title={isSelected ? 'Clique para desselecionar' : `Filtrar por ${produto}`}
+                    >
+                      <span>{produto}</span>
+                      <span
+                        className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                          isSelected
+                            ? 'bg-blue-700 text-blue-100'
+                            : 'bg-slate-100 dark:bg-slate-900 text-slate-500 dark:text-slate-400'
+                        }`}
+                      >
+                        {count}
+                      </span>
+                      {total > 0 && (
+                        <span className={`text-[10px] hidden sm:inline ${isSelected ? 'text-blue-200' : 'text-slate-400'}`}>
+                          ({formatBRL(total)})
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Active Filter Chips (Clear & Intuitive overview on Mobile and Desktop) */}
+          {isFiltered && (
+            <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 sm:p-3 rounded-xl bg-amber-50/80 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 text-xs animate-in fade-in duration-150">
+              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 text-amber-900 dark:text-amber-200">
+                <span className="font-bold flex items-center gap-1">
+                  <Filter className="w-3.5 h-3.5 text-amber-700 dark:text-amber-400" />
+                  Filtros Ativos:
+                </span>
+                {selectedTipo !== 'Todos' && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 font-semibold text-[11px]">
+                    Tipo: {selectedTipo}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedTipo('Todos');
+                        setSelectedProduto('Todos');
+                      }}
+                      className="hover:text-emerald-950 dark:hover:text-white ml-0.5 cursor-pointer"
+                      title="Remover filtro de Tipo"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                )}
+                {selectedProduto !== 'Todos' && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-200 font-semibold text-[11px]">
+                    Produto: {selectedProduto}
+                    <button
+                      type="button"
+                      onClick={() => setSelectedProduto('Todos')}
+                      className="hover:text-blue-950 dark:hover:text-white ml-0.5 cursor-pointer"
+                      title="Remover filtro de Produto"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                )}
+                {searchQuery.trim().length > 0 && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-semibold text-[11px]">
+                    Busca: &ldquo;{searchQuery}&rdquo;
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      className="hover:text-black dark:hover:text-white ml-0.5 cursor-pointer"
+                      title="Limpar termo de busca"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
                 )}
               </div>
 
-              {/* Subcategory Produto Filter */}
-              <div className="w-full sm:w-auto sm:min-w-[210px]">
-                <select
-                  id="filter-produto-select"
-                  value={selectedProduto}
-                  onChange={(e) => setSelectedProduto(e.target.value)}
-                  className="w-full h-10 px-3 text-xs sm:text-sm bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-medium text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-emerald-500 outline-hidden shadow-xs cursor-pointer"
-                >
-                  <option value="Todos">
-                    Todos os Produtos ({itemsMatchingSearchAndTipo.length} itens)
-                  </option>
-                  {availableProdutosWithStats.map(({ produto, count }) => (
-                    <option key={produto} value={produto}>
-                      {produto} ({count})
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedTipo('Todos');
+                  setSelectedProduto('Todos');
+                  setSearchQuery('');
+                }}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-200 dark:bg-amber-900 hover:bg-amber-300 dark:hover:bg-amber-800 text-amber-900 dark:text-amber-100 font-bold transition-colors cursor-pointer text-[11px]"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Limpar todos</span>
+              </button>
             </div>
+          )}
 
-            {/* Right Action Buttons */}
-            <div className="flex flex-wrap items-center gap-2 justify-start lg:justify-end shrink-0">
+          {/* Action Toolbar & Utilities Row */}
+          <div className="flex flex-wrap items-center justify-between gap-2.5 pt-2 border-t border-slate-200/70 dark:border-slate-800/70">
+            <div className="flex flex-wrap items-center gap-2">
               {onAddManualItem && (
                 <button
                   id="insert-manual-item-btn"
                   type="button"
                   onClick={onAddManualItem}
-                  className="h-10 px-3.5 rounded-xl border border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-xs font-bold transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer whitespace-nowrap"
+                  className="h-9 sm:h-10 px-3 sm:px-3.5 rounded-xl border border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-xs font-bold transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer whitespace-nowrap"
                   title="Inserir um novo item manualmente com todos os campos de edição"
                 >
                   <PlusCircle className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
@@ -743,23 +1046,26 @@ export const ReportTable: React.FC<ReportTableProps> = ({
                   type="button"
                   onClick={() => setIsStoreModalOpen(true)}
                   disabled={items.length === 0}
-                  className="h-10 px-3.5 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 disabled:opacity-40 disabled:cursor-not-allowed text-xs font-bold transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer whitespace-nowrap"
+                  className="h-9 sm:h-10 px-3 sm:px-3.5 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 disabled:opacity-40 disabled:cursor-not-allowed text-xs font-bold transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer whitespace-nowrap"
                   title="Alterar Razão Social de todos os itens para SENDAS DISTRIBUIDORA S/A"
                 >
                   <Building2 className="w-3.5 h-3.5" />
                   <span>Ajustar Razão Social</span>
                 </button>
               )}
+            </div>
 
+            <div className="flex items-center gap-2">
               {items.length > 0 && (
                 <button
                   id="clear-all-items-btn"
+                  type="button"
                   onClick={() => {
-                    if (window.confirm('Deseja realmente limpar todos os itens do LocalStorage?')) {
+                    if (window.confirm('Deseja realmente limpar todos os itens salvos?')) {
                       onClearAll();
                     }
                   }}
-                  className="h-10 px-3.5 rounded-xl border border-red-200 dark:border-red-900 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 text-xs font-semibold transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer whitespace-nowrap"
+                  className="h-9 sm:h-10 px-3 sm:px-3.5 rounded-xl border border-red-200 dark:border-red-900 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 text-xs font-semibold transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer whitespace-nowrap"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                   <span>Limpar Tudo</span>
@@ -768,6 +1074,9 @@ export const ReportTable: React.FC<ReportTableProps> = ({
             </div>
           </div>
         </div>
+
+        {/* Top Pagination Bar */}
+        {renderPaginationBar('top')}
 
         {/* Table View with Sticky Actions Column */}
         <div className="overflow-x-auto relative rounded-b-2xl border-t border-slate-200 dark:border-slate-800">
@@ -876,15 +1185,15 @@ export const ReportTable: React.FC<ReportTableProps> = ({
 
             {/* Table Body */}
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {filteredItems.length > 0 ? (
-                filteredItems.map((item, index) => (
+              {paginatedItems.length > 0 ? (
+                paginatedItems.map((item, index) => (
                   <tr
-                    key={item.id ? `row_${item.id}_${index}` : `row_${item.num}_${index}`}
+                    key={item.id ? `row_${item.id}_${item.num ?? (startIndex + index + 1)}` : `row_${item.num ?? (startIndex + index + 1)}`}
                     className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group"
                   >
                     {/* 1. Num */}
                     <td className="p-3 sm:p-3.5 font-bold text-slate-400 dark:text-slate-500 text-center">
-                      {item.num ?? index + 1}
+                      {item.num ?? (startIndex + index + 1)}
                     </td>
 
                     {/* 2. Descrição */}
@@ -1031,11 +1340,14 @@ export const ReportTable: React.FC<ReportTableProps> = ({
           </table>
         </div>
 
+        {/* Bottom Pagination Bar */}
+        {renderPaginationBar('bottom')}
+
         {/* Footer Summary Row */}
         {filteredItems.length > 0 && (
           <div className="p-4 sm:p-5 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/80 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
             <div className="text-slate-500 dark:text-slate-400">
-              Mostrando <span className="font-bold text-slate-800 dark:text-slate-200">{filteredItems.length}</span> de <span className="font-bold text-slate-800 dark:text-slate-200">{items.length}</span> itens totais
+              Total acumulado: <span className="font-bold text-slate-800 dark:text-slate-200">{filteredItems.length}</span> itens filtrados {items.length !== filteredItems.length && `(de ${items.length} totais)`}
             </div>
 
             <div className="flex items-center gap-4">

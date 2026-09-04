@@ -29,6 +29,7 @@ export interface NFCeReceipt {
   itens: NFCeItem[];
   scannedAt: string;
   conferido?: 'Sim' | '-';
+  conferidoUpdatedAt?: number;
 }
 
 export interface CategoryRule {

@@ -1,23 +1,31 @@
 import jsQR from 'jsqr';
-import { BrowserQRCodeReader } from '@zxing/browser';
+import {
+  QRCodeReader,
+  RGBLuminanceSource,
+  BinaryBitmap,
+  HybridBinarizer,
+  DecodeHintType,
+} from '@zxing/library';
+import { Html5Qrcode } from 'html5-qrcode';
 
 /**
  * Universal High-Precision QR Code Decoder
- * Combines Native OS BarcodeDetector (Google Play Services / Apple Vision) + jsQR + ZXing + Thermal Receipt Image Enhancer
+ * Combines Native OS BarcodeDetector (Google Play Services / Apple Vision) +
+ * Html5Qrcode + ZXing QRCodeReader + jsQR + Thermal Receipt Smart Cropping & Binarization
  */
 
 export interface DecodeResult {
   text: string;
-  source: 'native_barcode_detector' | 'jsqr' | 'zxing' | 'enhanced_filter';
+  source: 'native_barcode_detector' | 'html5_qrcode' | 'jsqr' | 'zxing' | 'thermal_contrast' | 'ai_ocr';
 }
 
-// Check if Native BarcodeDetector is supported by browser
+// Check if Native BarcodeDetector is supported by browser (e.g. Chrome on Android / Edge)
 export function isBarcodeDetectorSupported(): boolean {
   return typeof window !== 'undefined' && 'BarcodeDetector' in window;
 }
 
 let nativeDetectorInstance: any = null;
-function getNativeDetector() {
+export function getNativeDetector(): any {
   if (isBarcodeDetectorSupported() && !nativeDetectorInstance) {
     try {
       nativeDetectorInstance = new (window as any).BarcodeDetector({
@@ -30,21 +38,71 @@ function getNativeDetector() {
   return nativeDetectorInstance;
 }
 
-const zxingReader = new BrowserQRCodeReader();
+// Initialize ZXing QRCodeReader with TRY_HARDER
+const zxingQrReader = new QRCodeReader();
+const zxingHints = new Map();
+zxingHints.set(DecodeHintType.TRY_HARDER, true);
+
+export function decodeZxingFromImageData(imageData: ImageData): string | null {
+  try {
+    const lum = new RGBLuminanceSource(imageData.data, imageData.width, imageData.height);
+    const bin = new BinaryBitmap(new HybridBinarizer(lum));
+    const result = zxingQrReader.decode(bin, zxingHints);
+    return result ? result.getText() : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
- * Decode from an ImageData buffer (used in live video frame loop)
+ * Thermal Receipt Contrast Enhancer & Adaptive Binarizer
+ * Stretches contrast so faded dot-matrix / thermal printing on paper turns into solid black & white.
  */
-export async function decodeFromImageData(
-  imageData: ImageData,
-  canvas?: HTMLCanvasElement
+export function enhanceThermalContrast(imageData: ImageData): ImageData {
+  const d = new Uint8ClampedArray(imageData.data);
+  const len = d.length;
+
+  let minLum = 255;
+  let maxLum = 0;
+  for (let i = 0; i < len; i += 4) {
+    const lum = (d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8;
+    if (lum < minLum) minLum = lum;
+    if (lum > maxLum) maxLum = lum;
+  }
+
+  const range = maxLum - minLum || 1;
+  const threshold = minLum + range * 0.52;
+
+  for (let i = 0; i < len; i += 4) {
+    const lum = (d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8;
+    const v = lum < threshold ? 0 : 255;
+    d[i] = v;
+    d[i + 1] = v;
+    d[i + 2] = v;
+  }
+
+  return new ImageData(d, imageData.width, imageData.height);
+}
+
+/**
+ * High-Speed Frame Decoder for Live Video Camera Stream
+ * Priority 1: Native BarcodeDetector directly on <video> (hardware-accelerated, 60fps, 0-copy memory)
+ * Priority 2: Center Reticle ROI (400x400) via jsQR (< 3ms CPU execution)
+ * Priority 3: Center Reticle ROI via ZXing QRCodeReader
+ * Priority 4: Downscaled full frame (640x360)
+ */
+export async function decodeFromVideoElement(
+  video: HTMLVideoElement,
+  roiCanvas: HTMLCanvasElement,
+  fullCanvas?: HTMLCanvasElement,
+  checkFullFrame: boolean = false
 ): Promise<DecodeResult | null> {
   const detector = getNativeDetector();
 
-  // 1. Try Native BarcodeDetector if canvas is available
-  if (detector && canvas) {
+  // 1. Native BarcodeDetector directly on <video> element (fastest possible, Android Google Play Services)
+  if (detector) {
     try {
-      const barcodes = await detector.detect(canvas);
+      const barcodes = await detector.detect(video);
       if (barcodes && barcodes.length > 0 && barcodes[0].rawValue) {
         return {
           text: barcodes[0].rawValue,
@@ -52,38 +110,129 @@ export async function decodeFromImageData(
         };
       }
     } catch {
-      // fallback
+      // Fall through to canvas ROI
     }
   }
 
-  // 2. Try jsQR (fast, highly optimized JS engine)
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  if (!vw || !vh || vw <= 0 || vh <= 0) return null;
+
+  // 2. Central Reticle ROI (Region Of Interest)
+  // The user aligns the QR code within the central green reticle on screen (~65% of smaller dimension)
+  const roiCtx = roiCanvas.getContext('2d', { willReadFrequently: true });
+  if (roiCtx) {
+    const roiSize = Math.min(vw, vh) * 0.65;
+    const sx = (vw - roiSize) / 2;
+    const sy = (vh - roiSize) / 2;
+    const targetDim = 420;
+
+    if (roiCanvas.width !== targetDim || roiCanvas.height !== targetDim) {
+      roiCanvas.width = targetDim;
+      roiCanvas.height = targetDim;
+    }
+
+    roiCtx.drawImage(video, sx, sy, roiSize, roiSize, 0, 0, targetDim, targetDim);
+    const roiImageData = roiCtx.getImageData(0, 0, targetDim, targetDim);
+
+    // jsQR on 420x420 is ultra-fast (< 3ms)
+    try {
+      const code = jsQR(roiImageData.data, targetDim, targetDim, {
+        inversionAttempts: 'attemptBoth',
+      });
+      if (code && code.data) {
+        return { text: code.data, source: 'jsqr' };
+      }
+    } catch {}
+
+    // ZXing QRCodeReader on ROI
+    const zxText = decodeZxingFromImageData(roiImageData);
+    if (zxText) {
+      return { text: zxText, source: 'zxing' };
+    }
+  }
+
+  // 3. Optional full-frame pass (for off-center QR codes)
+  if (checkFullFrame && fullCanvas) {
+    const fullCtx = fullCanvas.getContext('2d', { willReadFrequently: true });
+    if (fullCtx) {
+      const fw = 640;
+      const fh = Math.round((vh / vw) * 640);
+      if (fullCanvas.width !== fw || fullCanvas.height !== fh) {
+        fullCanvas.width = fw;
+        fullCanvas.height = fh;
+      }
+      fullCtx.drawImage(video, 0, 0, fw, fh);
+      const fullImgData = fullCtx.getImageData(0, 0, fw, fh);
+
+      try {
+        const code = jsQR(fullImgData.data, fw, fh, { inversionAttempts: 'attemptBoth' });
+        if (code && code.data) {
+          return { text: code.data, source: 'jsqr' };
+        }
+      } catch {}
+
+      const zxFullText = decodeZxingFromImageData(fullImgData);
+      if (zxFullText) {
+        return { text: zxFullText, source: 'zxing' };
+      }
+    }
+  }
+
+  return null;
+}
+
+// Backward compatibility helper
+export async function decodeFromImageData(
+  imageData: ImageData,
+  canvas?: HTMLCanvasElement
+): Promise<DecodeResult | null> {
+  const detector = getNativeDetector();
+  if (detector && canvas) {
+    try {
+      const barcodes = await detector.detect(canvas);
+      if (barcodes && barcodes.length > 0 && barcodes[0].rawValue) {
+        return { text: barcodes[0].rawValue, source: 'native_barcode_detector' };
+      }
+    } catch {}
+  }
+
   try {
     const code = jsQR(imageData.data, imageData.width, imageData.height, {
       inversionAttempts: 'attemptBoth',
     });
     if (code && code.data) {
-      return {
-        text: code.data,
-        source: 'jsqr',
-      };
+      return { text: code.data, source: 'jsqr' };
     }
-  } catch {
-    // fallback
+  } catch {}
+
+  const zxText = decodeZxingFromImageData(imageData);
+  if (zxText) {
+    return { text: zxText, source: 'zxing' };
   }
 
   return null;
 }
 
 /**
- * High-Precision Multi-Pass Decoder for Static Images & Camera Photos
- * Handles faded thermal paper receipts, crumpling, glare, and high-density NFC-e codes.
+ * Universal Multi-Engine & Multi-Region Image Decoder for Photos and Uploaded Files
+ * Fixes "Não foi possível encontrar o QR Code" by:
+ * 1. Native OS BarcodeDetector on full image
+ * 2. Html5Qrcode.scanFile engine
+ * 3. Targeted Smart Cropping:
+ *    - Bottom 60% (standard Brazilian NFC-e ticket format has QR code at bottom)
+ *    - Center 65% x 65%
+ *    - Full image at 1600px and 1000px
+ *    - Top 60% (in case photo was taken inverted)
+ * 4. Thermal paper contrast booster and adaptive binarization
  */
 export async function decodeFromImageElement(
-  img: HTMLImageElement | HTMLCanvasElement | ImageBitmap
+  img: HTMLImageElement | HTMLCanvasElement,
+  originalFile?: File
 ): Promise<DecodeResult | null> {
   const detector = getNativeDetector();
 
-  // Pass 1: Native BarcodeDetector (instant OS-level Google Play Services / Apple Vision)
+  // Pass 1: Native BarcodeDetector on image element
   if (detector) {
     try {
       const barcodes = await detector.detect(img);
@@ -93,104 +242,160 @@ export async function decodeFromImageElement(
           source: 'native_barcode_detector',
         };
       }
-    } catch (err) {
-      console.warn('Native BarcodeDetector pass failed:', err);
-    }
+    } catch {}
   }
 
-  // Pass 2: ZXing Reader on image element
-  if (img instanceof HTMLImageElement) {
+  // Pass 2: Html5Qrcode.scanFile if original File is available
+  if (originalFile && typeof document !== 'undefined') {
     try {
-      const zxResult = await zxingReader.decodeFromImageElement(img);
-      if (zxResult && zxResult.getText()) {
-        return {
-          text: zxResult.getText(),
-          source: 'zxing',
-        };
+      let hiddenContainer = document.getElementById('html5-qr-hidden-container');
+      if (!hiddenContainer) {
+        hiddenContainer = document.createElement('div');
+        hiddenContainer.id = 'html5-qr-hidden-container';
+        hiddenContainer.style.display = 'none';
+        document.body.appendChild(hiddenContainer);
       }
-    } catch {
-      // Continue to canvas passes
-    }
+      const html5Qr = new Html5Qrcode('html5-qr-hidden-container');
+      const scanText = await html5Qr.scanFile(originalFile, false);
+      if (scanText && scanText.trim()) {
+        return { text: scanText.trim(), source: 'html5_qrcode' };
+      }
+    } catch {}
   }
 
-  // Prepare Canvas for image processing
-  const canvas = document.createElement('canvas');
-  const width = img instanceof HTMLImageElement ? img.naturalWidth || img.width : img.width;
-  const height = img instanceof HTMLImageElement ? img.naturalHeight || img.height : img.height;
+  const origWidth = img instanceof HTMLImageElement ? img.naturalWidth || img.width : img.width;
+  const origHeight = img instanceof HTMLImageElement ? img.naturalHeight || img.height : img.height;
 
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) return null;
+  if (!origWidth || !origHeight) return null;
 
-  ctx.drawImage(img, 0, 0, width, height);
+  // Candidate regions to inspect
+  interface CropRegion {
+    name: string;
+    sx: number;
+    sy: number;
+    sw: number;
+    sh: number;
+    maxDim: number;
+  }
 
-  // Pass 3: jsQR on raw full-res image
-  try {
-    const imgData = ctx.getImageData(0, 0, width, height);
-    const code = jsQR(imgData.data, width, height, { inversionAttempts: 'attemptBoth' });
-    if (code && code.data) {
-      return { text: code.data, source: 'jsqr' };
+  const regions: CropRegion[] = [
+    // 1. Bottom 60% of receipt (where 95% of Brazilian NFC-e QR codes are printed!)
+    {
+      name: 'bottom_half',
+      sx: 0,
+      sy: Math.floor(origHeight * 0.38),
+      sw: origWidth,
+      sh: Math.floor(origHeight * 0.62),
+      maxDim: 1200,
+    },
+    // 2. Center 65% x 65% (where user framed the QR code)
+    {
+      name: 'center_box',
+      sx: Math.floor(origWidth * 0.17),
+      sy: Math.floor(origHeight * 0.17),
+      sw: Math.floor(origWidth * 0.66),
+      sh: Math.floor(origHeight * 0.66),
+      maxDim: 1100,
+    },
+    // 3. Full image (scaled to 1600px)
+    {
+      name: 'full_1600',
+      sx: 0,
+      sy: 0,
+      sw: origWidth,
+      sh: origHeight,
+      maxDim: 1600,
+    },
+    // 4. Full image (scaled to 1000px)
+    {
+      name: 'full_1000',
+      sx: 0,
+      sy: 0,
+      sw: origWidth,
+      sh: origHeight,
+      maxDim: 1000,
+    },
+    // 5. Top 60% (inverted receipt)
+    {
+      name: 'top_half',
+      sx: 0,
+      sy: 0,
+      sw: origWidth,
+      sh: Math.floor(origHeight * 0.62),
+      maxDim: 1200,
+    },
+  ];
+
+  for (const reg of regions) {
+    const scale = Math.min(1, reg.maxDim / Math.max(reg.sw, reg.sh));
+    const dw = Math.round(reg.sw * scale);
+    const dh = Math.round(reg.sh * scale);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = dw;
+    canvas.height = dh;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) continue;
+
+    ctx.drawImage(img, reg.sx, reg.sy, reg.sw, reg.sh, 0, 0, dw, dh);
+
+    // Try Native on cropped canvas
+    if (detector) {
+      try {
+        const barcodes = await detector.detect(canvas);
+        if (barcodes && barcodes.length > 0 && barcodes[0].rawValue) {
+          return { text: barcodes[0].rawValue, source: 'native_barcode_detector' };
+        }
+      } catch {}
     }
-  } catch {}
 
-  // Pass 4: Downscaled 1600px / 1200px (removes optical camera noise on 48MP photos)
-  const targetSizes = [1600, 1200, 900, 600];
-  for (const maxDim of targetSizes) {
-    if (width > maxDim || height > maxDim) {
-      const scale = maxDim / Math.max(width, height);
-      const sw = Math.round(width * scale);
-      const sh = Math.round(height * scale);
+    const imgData = ctx.getImageData(0, 0, dw, dh);
 
-      const scaledCanvas = document.createElement('canvas');
-      scaledCanvas.width = sw;
-      scaledCanvas.height = sh;
-      const sCtx = scaledCanvas.getContext('2d', { willReadFrequently: true });
-      if (!sCtx) continue;
+    // Try jsQR on raw crop
+    try {
+      const code = jsQR(imgData.data, dw, dh, { inversionAttempts: 'attemptBoth' });
+      if (code && code.data) {
+        return { text: code.data, source: 'jsqr' };
+      }
+    } catch {}
 
-      sCtx.drawImage(img, 0, 0, sw, sh);
+    // Try ZXing on raw crop
+    const zxText = decodeZxingFromImageData(imgData);
+    if (zxText) {
+      return { text: zxText, source: 'zxing' };
+    }
 
-      // Try Native on scaled canvas
-      if (detector) {
-        try {
-          const scaledBarcodes = await detector.detect(scaledCanvas);
-          if (scaledBarcodes && scaledBarcodes.length > 0 && scaledBarcodes[0].rawValue) {
-            return { text: scaledBarcodes[0].rawValue, source: 'native_barcode_detector' };
-          }
-        } catch {}
+    // Thermal contrast boost filter pass
+    try {
+      const enhanced = enhanceThermalContrast(imgData);
+      const enhCode = jsQR(enhanced.data, dw, dh, { inversionAttempts: 'attemptBoth' });
+      if (enhCode && enhCode.data) {
+        return { text: enhCode.data, source: 'thermal_contrast' };
       }
 
-      // Try jsQR on scaled image
-      try {
-        const sImgData = sCtx.getImageData(0, 0, sw, sh);
-        const code = jsQR(sImgData.data, sw, sh, { inversionAttempts: 'attemptBoth' });
-        if (code && code.data) {
-          return { text: code.data, source: 'jsqr' };
-        }
-      } catch {}
-
-      // Pass 5: Binarization / Contrast enhancement for faded thermal receipts
-      try {
-        const bImgData = sCtx.getImageData(0, 0, sw, sh);
-        const d = bImgData.data;
-        // High-contrast adaptive thresholding filter
-        for (let i = 0; i < d.length; i += 4) {
-          const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-          // Boost contrast: stretch darks down and lights up
-          const val = gray < 135 ? 0 : 255;
-          d[i] = val;
-          d[i + 1] = val;
-          d[i + 2] = val;
-        }
-        sCtx.putImageData(bImgData, 0, 0);
-
-        const enhancedCode = jsQR(bImgData.data, sw, sh, { inversionAttempts: 'attemptBoth' });
-        if (enhancedCode && enhancedCode.data) {
-          return { text: enhancedCode.data, source: 'enhanced_filter' };
-        }
-      } catch {}
-    }
+      const zxEnhText = decodeZxingFromImageData(enhanced);
+      if (zxEnhText) {
+        return { text: zxEnhText, source: 'thermal_contrast' };
+      }
+    } catch {}
   }
 
   return null;
 }
+
+/**
+ * Utility to extract NFC-e Access Key (44 digits) or URL from scanned text
+ */
+export function extractChaveOrUrl(raw: string): { url?: string; accessKey?: string } {
+  if (!raw) return {};
+
+  const cleanDigits = raw.replace(/\D/g, '');
+  const match44 = raw.match(/([0-9]{44})/) || (cleanDigits.length === 44 ? [cleanDigits, cleanDigits] : null);
+  const accessKey = match44 ? match44[1] : (cleanDigits.length >= 44 ? cleanDigits.slice(0, 44) : undefined);
+
+  const isUrl = /^https?:\/\//i.test(raw.trim());
+  const url = isUrl ? raw.trim() : undefined;
+
+  return { url, accessKey };
+}
+

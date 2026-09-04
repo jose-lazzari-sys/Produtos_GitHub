@@ -7,7 +7,6 @@ import {
   SwitchCamera,
   AlertTriangle,
   Loader2,
-  FileCode,
   CheckCircle2,
   Sparkles,
   QrCode,
@@ -704,48 +703,14 @@ export const QRScanner: React.FC<QRScannerProps> = ({
         onChange={handleFileUpload}
       />
 
-      {/* AppSheet Inspired COMPROVANTE Configuration Header */}
-      <div className="p-4 sm:p-5 rounded-3xl bg-slate-900 text-white border border-slate-800 shadow-xl space-y-3">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-black text-sm">
-              NF
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] uppercase tracking-wider text-slate-400 font-bold">Coluna:</span>
-                <h3 className="text-base font-black text-white tracking-wide">COMPROVANTE</h3>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                  Scan Ativo
-                </span>
-              </div>
-              <p className="text-xs text-slate-400 flex flex-wrap items-center gap-x-2 gap-y-0.5 pt-0.5">
-                <span>Type: <strong className="text-emerald-400 font-mono">Text</strong></span>
-                <span>•</span>
-                <span>Scan?: <strong className="text-emerald-400 font-mono">Sim</strong></span>
-                <span>•</span>
-                <span>Search?: <strong className="text-emerald-400 font-mono">Sim</strong></span>
-                <span>•</span>
-                <span>Editable?: <strong className="text-emerald-400 font-mono">Sim</strong></span>
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 self-start sm:self-auto">
-            <span className="text-[11px] text-slate-400 bg-slate-800/90 px-2.5 py-1 rounded-xl border border-slate-700/60 flex items-center gap-1.5">
-              <ScanLine className="w-3.5 h-3.5 text-emerald-400" />
-              <span>{engineType}</span>
-            </span>
-          </div>
-        </div>
-
-        {/* Quick Action Buttons */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 border-t border-slate-800">
+      {/* Quick Action Buttons Toolbar */}
+      <div className="p-3 sm:p-3.5 rounded-2xl bg-slate-900 text-white border border-slate-800 shadow-xl">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           <button
             type="button"
             onClick={() => (isScanning ? stopLiveCamera() : startLiveCamera())}
             disabled={isProcessingFetch}
-            className={`py-2.5 px-3 rounded-2xl text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-sm ${
+            className={`py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-sm cursor-pointer ${
               isScanning
                 ? 'bg-amber-500 text-slate-950 hover:bg-amber-400'
                 : 'bg-emerald-600 text-white hover:bg-emerald-500 active:bg-emerald-700'
@@ -759,7 +724,7 @@ export const QRScanner: React.FC<QRScannerProps> = ({
             type="button"
             onClick={() => cameraCaptureInputRef.current?.click()}
             disabled={isProcessingFetch}
-            className="py-2.5 px-3 rounded-2xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-sm"
+            className="py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-sm cursor-pointer"
             title="Abre a câmera nativa do seu smartphone"
           >
             <Smartphone className="w-4 h-4 shrink-0" />
@@ -770,7 +735,7 @@ export const QRScanner: React.FC<QRScannerProps> = ({
             type="button"
             onClick={() => fileInputRef.current?.click()}
             disabled={isProcessingFetch}
-            className="py-2.5 px-3 rounded-2xl bg-slate-800 hover:bg-slate-700 active:bg-slate-900 text-slate-200 text-xs font-semibold transition-all flex items-center justify-center gap-2 border border-slate-700/80"
+            className="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 active:bg-slate-950 text-slate-200 text-xs font-semibold transition-all flex items-center justify-center gap-2 border border-slate-700/80 cursor-pointer"
           >
             <ImageIcon className="w-4 h-4 text-slate-400 shrink-0" />
             <span>Galeria</span>
@@ -785,7 +750,7 @@ export const QRScanner: React.FC<QRScannerProps> = ({
                 el.focus();
               }
             }}
-            className="py-2.5 px-3 rounded-2xl bg-slate-800 hover:bg-slate-700 active:bg-slate-900 text-slate-200 text-xs font-semibold transition-all flex items-center justify-center gap-2 border border-slate-700/80"
+            className="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 active:bg-slate-950 text-slate-200 text-xs font-semibold transition-all flex items-center justify-center gap-2 border border-slate-700/80 cursor-pointer"
           >
             <KeyRound className="w-4 h-4 text-amber-400 shrink-0" />
             <span>44 Dígitos</span>
@@ -883,7 +848,7 @@ export const QRScanner: React.FC<QRScannerProps> = ({
                   Câmera pronta para leitura instantânea
                 </p>
                 <p className="text-slate-400 text-xs leading-relaxed">
-                  Toque em <strong>"Abrir Câmera ao Vivo"</strong> ou tire uma foto direta usando <strong>"📸 Tirar Foto com a Câmera"</strong>.
+                  Use os botões acima para <strong>Câmera ao Vivo</strong>, <strong>Tirar Foto</strong> ou selecionar da <strong>Galeria</strong>.
                 </p>
               </div>
             </div>
@@ -982,69 +947,20 @@ export const QRScanner: React.FC<QRScannerProps> = ({
           </div>
         )}
 
-        {/* Primary Controls (Large, Ergonomic Touch Targets) */}
-        <div className="p-4 sm:p-6 bg-white dark:bg-slate-900 space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {!isScanning ? (
-              <button
-                id="start-camera-btn"
-                type="button"
-                onClick={() => startLiveCamera()}
-                disabled={isProcessingFetch}
-                className="w-full py-4 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:opacity-50 text-white text-sm sm:text-base font-bold shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2.5 touch-manipulation min-h-[56px] cursor-pointer"
-              >
-                <Camera className="w-5 h-5 shrink-0" />
-                <span>Abrir Câmera ao Vivo</span>
-              </button>
-            ) : (
-              <button
-                id="stop-camera-btn"
-                type="button"
-                onClick={stopLiveCamera}
-                className="w-full py-4 px-4 rounded-2xl bg-slate-800 hover:bg-slate-900 text-white text-sm sm:text-base font-bold shadow-md transition-all flex items-center justify-center gap-2 min-h-[56px] cursor-pointer"
-              >
-                <span>Parar Câmera</span>
-              </button>
-            )}
-
-            {/* Direct Native Smartphone Camera Snapshot */}
+        {/* Stop Camera Bar (visible only when camera is actively streaming) */}
+        {isScanning && (
+          <div className="p-3 sm:p-4 bg-slate-900 border-t border-slate-800 flex justify-center">
             <button
-              id="snap-photo-camera-btn"
+              id="stop-camera-btn"
               type="button"
-              onClick={() => cameraCaptureInputRef.current?.click()}
-              disabled={isProcessingFetch}
-              className="w-full py-4 px-4 rounded-2xl bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 disabled:opacity-50 text-white text-sm sm:text-base font-bold shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2.5 touch-manipulation min-h-[56px] cursor-pointer"
-              title="Abre a câmera nativa do seu celular para fotografar o QR Code"
+              onClick={stopLiveCamera}
+              className="py-3 px-6 rounded-2xl bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-slate-950 text-xs sm:text-sm font-bold shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
             >
-              <Smartphone className="w-5 h-5 shrink-0" />
-              <span>📸 Tirar Foto com a Câmera</span>
+              <Camera className="w-4 h-4" />
+              <span>Parar Câmera</span>
             </button>
           </div>
-
-          {/* Secondary Actions: Gallery Upload & Manual XML */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-            <button
-              id="upload-qr-img-btn"
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isProcessingFetch}
-              className="w-full py-3.5 px-4 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-emerald-500 dark:hover:border-emerald-500 text-slate-700 dark:text-slate-300 text-xs sm:text-sm font-semibold hover:bg-emerald-50/50 dark:hover:bg-emerald-950/20 transition-all flex items-center justify-center gap-2 min-h-[48px] cursor-pointer"
-            >
-              <ImageIcon className="w-4 h-4 text-slate-500" />
-              <span>Escolher da Galeria / Arquivos</span>
-            </button>
-
-            <button
-              id="open-manual-xml-btn"
-              type="button"
-              onClick={() => onOpenXmlModal(lastScannedUrl || undefined)}
-              className="w-full py-3.5 px-4 rounded-xl bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-900/50 border border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-2 min-h-[48px] cursor-pointer"
-            >
-              <FileCode className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-              <span>Abra manualmente e cole o XML</span>
-            </button>
-          </div>
-        </div>
+        )}
       </div>
 
       {/* 44-DIGIT ACCESS KEY (CHAVE DE ACESSO) INPUT BOX */}

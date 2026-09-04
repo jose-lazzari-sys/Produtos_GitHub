@@ -24,7 +24,7 @@ import {
 import { NFCeItem } from '../types';
 import { formatBRL } from '../utils/nfceParser';
 import { parseDateToTimestamp } from '../utils/storage';
-import { extractPesoKg, extractVolumeLitros, calculatePrecoPorKg, calculatePrecoPorLitro } from '../utils/weightUtils';
+import { extractPesoKg, extractVolumeLitros, calculatePrecoPorKg, calculatePrecoPorLitro, getItemAlimentacaoWeight } from '../utils/weightUtils';
 import { CATEGORY_RULES, VALID_TIPOS, normalizeTipo, normalizeProduto } from '../utils/classifier';
 
 interface DashboardTabProps {
@@ -335,7 +335,9 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({ items, onGoToItems }
   const metrics = useMemo(() => {
     let totalValor = 0;
     let totalKg = 0;
-    let totalValorWithKg = 0;
+    let totalValorAlimentacao = 0;
+    let hasOtherTipo = false;
+    let hasAlimentacao = false;
 
     filteredItems.forEach((item) => {
       const valor = Number(item.valorTotal) || 0;
@@ -343,32 +345,25 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({ items, onGoToItems }
 
       const normTipo = normalizeTipo(item.tipo);
       if (normTipo === 'Alimentação') {
-        let peso = 0;
-        if (typeof item.pesoKg === 'number' && item.pesoKg > 0) {
-          peso = item.pesoKg;
-        } else {
-          peso = extractPesoKg(item.descricao, item.qtd, item.unidade, item.tipo);
-        }
-
-        if (peso > 0) {
-          const safeQtd = item.qtd > 0 ? item.qtd : 1;
-          const cleanUnit = (item.unidade || '').trim().toUpperCase();
-          const itemTotalKg = (cleanUnit === 'KG' || Math.abs(peso - safeQtd) < 0.0001)
-            ? peso
-            : peso * safeQtd;
-
+        hasAlimentacao = true;
+        totalValorAlimentacao += valor;
+        const itemTotalKg = getItemAlimentacaoWeight(item);
+        if (itemTotalKg > 0) {
           totalKg += itemTotalKg;
-          totalValorWithKg += valor;
         }
+      } else {
+        hasOtherTipo = true;
       }
     });
 
-    const precoMedioKg = totalKg > 0 ? totalValorWithKg / totalKg : 0;
+    const onlyAlimentacao = hasAlimentacao && !hasOtherTipo;
+    const precoMedioKg = (onlyAlimentacao && totalKg > 0) ? totalValorAlimentacao / totalKg : 0;
 
     return {
       totalValor,
       totalKg,
-      precoMedioKg
+      precoMedioKg,
+      onlyAlimentacao
     };
   }, [filteredItems]);
 
@@ -420,18 +415,11 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({ items, onGoToItems }
               // Calculate total liters for beverages
               let totalLitros = 0;
               prodItems.forEach((it) => {
-                const vol = extractVolumeLitros(it.descricao, it.qtd, it.unidade, it.produto);
-                if (vol > 0) {
-                  const safeQ = it.qtd > 0 ? it.qtd : 1;
-                  const cleanU = (it.unidade || '').trim().toUpperCase();
-                  totalLitros += (cleanU === 'L' || cleanU === 'LT' || Math.abs(vol - safeQ) < 0.0001)
-                    ? vol
-                    : vol * safeQ;
-                }
+                totalLitros += getItemAlimentacaoWeight(it);
               });
 
               if (totalLitros > 0) {
-                quantidadeFormatted = `${totalLitros.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} litros`;
+                quantidadeFormatted = `${totalLitros.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 3 })} litros`;
                 const precoLitro = prodValor / totalLitros;
                 precoUnitarioFormatted = `${precoLitro.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} R$/litro`;
               } else {
@@ -442,21 +430,11 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({ items, onGoToItems }
               // Standard food: calculate total Kg
               let totalKg = 0;
               prodItems.forEach((it) => {
-                let peso = (typeof it.pesoKg === 'number' && it.pesoKg > 0)
-                  ? it.pesoKg
-                  : extractPesoKg(it.descricao, it.qtd, it.unidade, it.tipo);
-
-                if (peso > 0) {
-                  const safeQ = it.qtd > 0 ? it.qtd : 1;
-                  const cleanU = (it.unidade || '').trim().toUpperCase();
-                  totalKg += (cleanU === 'KG' || Math.abs(peso - safeQ) < 0.0001)
-                    ? peso
-                    : peso * safeQ;
-                }
+                totalKg += getItemAlimentacaoWeight(it);
               });
 
               if (totalKg > 0) {
-                quantidadeFormatted = `${totalKg.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} Kg`;
+                quantidadeFormatted = `${totalKg.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 3 })} Kg`;
                 const precoKg = prodValor / totalKg;
                 precoUnitarioFormatted = `${precoKg.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} R$/Kg`;
               } else {
@@ -672,10 +650,10 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({ items, onGoToItems }
 
           {/* 3 BEVELED METRIC CARDS (MIRRORS EXACTLY THE 3 BUTTONS/BLOCKS IN FIGURE 1) */}
           <div className="space-y-2">
-            {/* Card 1: Total R$ */}
+            {/* Card 1: Total Gasto */}
             <div className="p-2.5 px-4 rounded-xl bg-[#e9e9e0] dark:bg-slate-800 border-2 border-slate-300 dark:border-slate-700 shadow-[inset_0_1px_2px_rgba(255,255,255,0.8),0_2px_4px_rgba(0,0,0,0.1)] text-center">
               <span className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400 block tracking-wider">
-                Total Faturado
+                Total Gasto
               </span>
               <span className="text-base sm:text-lg font-black text-slate-900 dark:text-white tracking-tight">
                 {formatBRL(metrics.totalValor)}
@@ -687,10 +665,15 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({ items, onGoToItems }
               <span className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400 block tracking-wider">
                 Peso Alimentação
               </span>
-              <span className="text-sm sm:text-base font-black text-slate-900 dark:text-white">
-                {metrics.totalKg > 0
-                  ? `${metrics.totalKg.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} Kg`
-                  : '0,0 Kg'}
+              <span
+                className="text-sm sm:text-base font-black text-slate-900 dark:text-white"
+                title={metrics.onlyAlimentacao && metrics.totalKg > 0 ? `${metrics.totalKg.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 3 })} Kg` : undefined}
+              >
+                {metrics.onlyAlimentacao
+                  ? (metrics.totalKg > 0
+                      ? `${metrics.totalKg.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} Kg`
+                      : '0,0 Kg')
+                  : '-'}
               </span>
             </div>
 
@@ -700,9 +683,11 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({ items, onGoToItems }
                 Preço Médio Kg
               </span>
               <span className="text-sm sm:text-base font-black text-slate-900 dark:text-white">
-                {metrics.precoMedioKg > 0
-                  ? `${metrics.precoMedioKg.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} R$/Kg`
-                  : '0,00 R$/Kg'}
+                {metrics.onlyAlimentacao
+                  ? (metrics.precoMedioKg > 0
+                      ? `${metrics.precoMedioKg.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} R$/Kg`
+                      : '0,00 R$/Kg')
+                  : '-'}
               </span>
             </div>
           </div>

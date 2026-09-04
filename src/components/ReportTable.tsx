@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { NFCeItem, NFCeReceipt } from '../types';
 import { parseDateToTimestamp } from '../utils/storage';
-import { extractPesoKg, extractVolumeLitros } from '../utils/weightUtils';
+import { extractPesoKg, extractVolumeLitros, getItemAlimentacaoWeight } from '../utils/weightUtils';
 import { ReportSlicers, SlicerMetrics } from './ReportSlicers';
 import { ReportMatrixView, MatrixGroup } from './ReportMatrixView';
 import { ReportChartsView } from './ReportChartsView';
@@ -146,7 +146,7 @@ export const ReportTable: React.FC<ReportTableProps> = ({
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // View toggle: 'items' (Visualizar Itens) | 'matrix' (Tabela Matriz) | 'charts' (Visão Gráfica)
-  const [viewMode, setViewMode] = useState<'items' | 'matrix' | 'charts'>('items');
+  const [viewMode, setViewMode] = useState<'items' | 'matrix' | 'charts'>('matrix');
 
   // Clear all filters handler
   const handleClearAllFilters = () => {
@@ -351,30 +351,33 @@ export const ReportTable: React.FC<ReportTableProps> = ({
   const metrics: SlicerMetrics = useMemo(() => {
     let totalValor = 0;
     let totalKg = 0;
+    let totalValorAlimentacao = 0;
+    let hasOtherTipo = false;
+    let hasAlimentacao = false;
 
     filteredItems.forEach((it) => {
-      totalValor += Number(it.valorTotal) || 0;
+      const valor = Number(it.valorTotal) || 0;
+      totalValor += valor;
       if (normalizeTipo(it.tipo) === 'Alimentação') {
-        let peso = (typeof it.pesoKg === 'number' && it.pesoKg > 0)
-          ? it.pesoKg
-          : extractPesoKg(it.descricao, it.qtd, it.unidade, it.tipo);
-
-        if (peso > 0) {
-          const safeQ = it.qtd > 0 ? it.qtd : 1;
-          const cleanU = (it.unidade || '').trim().toUpperCase();
-          totalKg += (cleanU === 'KG' || Math.abs(peso - safeQ) < 0.0001)
-            ? peso
-            : peso * safeQ;
+        hasAlimentacao = true;
+        totalValorAlimentacao += valor;
+        const itemKg = getItemAlimentacaoWeight(it);
+        if (itemKg > 0) {
+          totalKg += itemKg;
         }
+      } else {
+        hasOtherTipo = true;
       }
     });
 
-    const precoMedioKg = totalKg > 0 ? totalValor / totalKg : 0;
+    const onlyAlimentacao = hasAlimentacao && !hasOtherTipo;
+    const precoMedioKg = (onlyAlimentacao && totalKg > 0) ? totalValorAlimentacao / totalKg : 0;
 
     return {
       totalValor,
       totalKg,
-      precoMedioKg
+      precoMedioKg,
+      onlyAlimentacao
     };
   }, [filteredItems]);
 
@@ -421,39 +424,22 @@ export const ReportTable: React.FC<ReportTableProps> = ({
             if (prodName === 'bebidas') {
               let totalLitros = 0;
               prodItems.forEach((it) => {
-                const vol = extractVolumeLitros(it.descricao, it.qtd, it.unidade, it.produto);
-                if (vol > 0) {
-                  const safeQ = it.qtd > 0 ? it.qtd : 1;
-                  const cleanU = (it.unidade || '').trim().toUpperCase();
-                  totalLitros += (cleanU === 'L' || cleanU === 'LT' || Math.abs(vol - safeQ) < 0.0001)
-                    ? vol
-                    : vol * safeQ;
-                }
+                totalLitros += getItemAlimentacaoWeight(it);
               });
 
               if (totalLitros > 0) {
-                quantidadeFormatted = `${totalLitros.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} litros`;
+                quantidadeFormatted = `${totalLitros.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 3 })} litros`;
                 const precoLitro = prodValor / totalLitros;
                 precoUnitarioFormatted = `${precoLitro.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} R$/litro`;
               }
             } else {
               let totalKg = 0;
               prodItems.forEach((it) => {
-                let peso = (typeof it.pesoKg === 'number' && it.pesoKg > 0)
-                  ? it.pesoKg
-                  : extractPesoKg(it.descricao, it.qtd, it.unidade, it.tipo);
-
-                if (peso > 0) {
-                  const safeQ = it.qtd > 0 ? it.qtd : 1;
-                  const cleanU = (it.unidade || '').trim().toUpperCase();
-                  totalKg += (cleanU === 'KG' || Math.abs(peso - safeQ) < 0.0001)
-                    ? peso
-                    : peso * safeQ;
-                }
+                totalKg += getItemAlimentacaoWeight(it);
               });
 
               if (totalKg > 0) {
-                quantidadeFormatted = `${totalKg.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} Kg`;
+                quantidadeFormatted = `${totalKg.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 3 })} Kg`;
                 const precoKg = prodValor / totalKg;
                 precoUnitarioFormatted = `${precoKg.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} R$/Kg`;
               }

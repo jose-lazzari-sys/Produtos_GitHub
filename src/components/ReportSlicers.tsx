@@ -12,6 +12,7 @@ export interface SlicerMetrics {
   totalValor: number;
   totalKg: number;
   precoMedioKg: number;
+  onlyAlimentacao?: boolean;
 }
 
 export interface ReportSlicersProps {
@@ -171,10 +172,10 @@ export const ReportSlicers: React.FC<ReportSlicersProps> = ({
 
         {/* 3 BEVELED METRIC CARDS (FIGURA 1) */}
         <div className="space-y-1.5">
-          {/* Card 1: Total R$ */}
+          {/* Card 1: Total Gasto */}
           <div className="p-2 px-3 rounded-xl bg-[#e9e9e0] dark:bg-slate-800 border-2 border-slate-300 dark:border-slate-700 shadow-[inset_0_1px_2px_rgba(255,255,255,0.8),0_2px_4px_rgba(0,0,0,0.1)] text-center">
             <span className="text-[9px] uppercase font-bold text-slate-500 dark:text-slate-400 block tracking-wider">
-              Total Faturado
+              Total Gasto
             </span>
             <span className="text-base font-black text-slate-900 dark:text-white tracking-tight">
               {formatBRL(metrics.totalValor)}
@@ -186,10 +187,15 @@ export const ReportSlicers: React.FC<ReportSlicersProps> = ({
             <span className="text-[9px] uppercase font-bold text-slate-500 dark:text-slate-400 block tracking-wider">
               Peso Alimentação
             </span>
-            <span className="text-sm font-black text-slate-900 dark:text-white">
-              {metrics.totalKg > 0
-                ? `${metrics.totalKg.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} Kg`
-                : '0,0 Kg'}
+            <span
+              className="text-sm font-black text-slate-900 dark:text-white"
+              title={metrics.onlyAlimentacao && metrics.totalKg > 0 ? `${metrics.totalKg.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 3 })} Kg` : undefined}
+            >
+              {metrics.onlyAlimentacao
+                ? (metrics.totalKg > 0
+                    ? `${metrics.totalKg.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} Kg`
+                    : '0,0 Kg')
+                : '-'}
             </span>
           </div>
 
@@ -199,9 +205,11 @@ export const ReportSlicers: React.FC<ReportSlicersProps> = ({
               Preço Médio Kg
             </span>
             <span className="text-sm font-black text-slate-900 dark:text-white">
-              {metrics.precoMedioKg > 0
-                ? `${metrics.precoMedioKg.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} R$/Kg`
-                : '0,00 R$/Kg'}
+              {metrics.onlyAlimentacao
+                ? (metrics.precoMedioKg > 0
+                    ? `${metrics.precoMedioKg.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} R$/Kg`
+                    : '0,00 R$/Kg')
+                : '-'}
             </span>
           </div>
         </div>

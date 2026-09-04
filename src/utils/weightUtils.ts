@@ -158,3 +158,89 @@ export function calculatePrecoPorLitro(
 
   return safeVal / (volumeL * safeQtd);
 }
+
+/**
+ * Calculates the total weight in Kilograms (or volume in Liters for beverages, where 1L = 1Kg)
+ * for an item belonging to 'Alimentação'.
+ * 
+ * Hierarchy:
+ * 1. PRIMARY SOURCE OF TRUTH: Explicit pesoKg set on the item (from "Editar Classificação e Item",
+ *    imported spreadsheet column "PESO Kg", or stored item record).
+ * 2. Fallback: Unit 'KG' where qtd is the total weight.
+ * 3. Fallback: Beverage or liquid volume (where 1L = 1Kg).
+ * 4. Fallback: Extracted weight from description (e.g. "395g").
+ */
+export function getItemAlimentacaoWeight(item: {
+  tipo?: string;
+  produto?: string;
+  descricao?: string;
+  qtd?: number;
+  unidade?: string;
+  pesoKg?: number;
+}): number {
+  if (!item) {
+    return 0;
+  }
+
+  // Verify that item belongs to 'Alimentação'
+  const rawTipo = (item.tipo || '').trim();
+  if (rawTipo) {
+    const norm = rawTipo.toLowerCase();
+    const isAlimentacao = norm.includes('alimen') || norm.includes('comida') || norm === 'alimentação';
+    if (!isAlimentacao) {
+      return 0;
+    }
+  }
+
+  // 1. PRIMARY SOURCE OF TRUTH: Explicit pesoKg set on the item
+  // Matches exact value found in "Editar Classificação e Item"
+  const parsedPeso = typeof item.pesoKg === 'number'
+    ? item.pesoKg
+    : (item.pesoKg !== undefined && item.pesoKg !== null && String(item.pesoKg).trim() !== ''
+        ? parseFloat(String(item.pesoKg).replace(',', '.'))
+        : 0);
+
+  if (!isNaN(parsedPeso) && parsedPeso > 0) {
+    return Number(parsedPeso.toFixed(3));
+  }
+
+  const cleanUnit = (item.unidade || '').trim().toUpperCase();
+  const safeQtd = Number(item.qtd) > 0 ? Number(item.qtd) : 1;
+  const normProd = (item.produto || '').trim().toLowerCase();
+
+  // 2. Fallback: If unit is explicitly KG, quantity itself is the total weight in Kg
+  if (cleanUnit === 'KG' || cleanUnit === 'KILO' || cleanUnit === 'QUILO' || cleanUnit.includes('KG')) {
+    return safeQtd;
+  }
+
+  // 3. Fallback: Beverage products (bebidas) or liquid units (L, LT, ML)
+  if (normProd === 'bebidas' || cleanUnit === 'L' || cleanUnit === 'LT' || cleanUnit === 'LTS' || cleanUnit === 'ML') {
+    const vol = extractVolumeLitros(item.descricao || '', safeQtd, item.unidade, item.produto);
+    if (vol > 0) {
+      if (cleanUnit === 'L' || cleanUnit === 'LT' || Math.abs(vol - safeQtd) < 0.0001) {
+        return Number(vol.toFixed(3));
+      }
+      return Number((vol * safeQtd).toFixed(3));
+    }
+  }
+
+  // 4. Fallback: Pre-packaged items with weight in description (e.g. 395g * safeQtd)
+  const extractedWeight = extractPesoKg(item.descricao || '', safeQtd, item.unidade, item.tipo);
+  if (extractedWeight > 0) {
+    if (Math.abs(extractedWeight - safeQtd) < 0.0001) {
+      return extractedWeight;
+    }
+    return Number((extractedWeight * safeQtd).toFixed(3));
+  }
+
+  // 5. Fallback: Volume check for liquid food (e.g. azeite, óleo, vinagre, leite)
+  const vol = extractVolumeLitros(item.descricao || '', safeQtd, item.unidade, item.produto);
+  if (vol > 0) {
+    if (cleanUnit === 'L' || cleanUnit === 'LT' || Math.abs(vol - safeQtd) < 0.0001) {
+      return Number(vol.toFixed(3));
+    }
+    return Number((vol * safeQtd).toFixed(3));
+  }
+
+  return 0;
+}

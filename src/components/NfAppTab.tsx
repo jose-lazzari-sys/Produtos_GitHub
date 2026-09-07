@@ -22,10 +22,13 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
-  ChevronsRight
+  ChevronsRight,
+  Calendar,
+  RotateCcw
 } from 'lucide-react';
 import { NFCeReceipt, NFCeItem } from '../types';
-import { parseDateToTimestamp } from '../utils/storage';
+import { parseDateToTimestamp, extractYearMonthFromDate } from '../utils/storage';
+import { SlicerBox } from './ReportSlicers';
 
 interface NfAppTabProps {
   receipts: NFCeReceipt[];
@@ -49,6 +52,7 @@ export function NfAppTab({
   onSwitchToScanner
 }: NfAppTabProps) {
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedYearMonth, setSelectedYearMonth] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | 'sim' | 'pendente'>('all');
   const [expandedReceiptId, setExpandedReceiptId] = useState<string | null>(null);
   const [sortField, setSortField] = useState<'data' | 'qtd' | 'razao' | 'total' | 'conferido'>('data');
@@ -57,6 +61,22 @@ export function NfAppTab({
   const [selectedReceiptIds, setSelectedReceiptIds] = useState<Set<string>>(new Set());
   const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState(false);
 
+  // Available Year-Months derived from receipts (sorted most recent to oldest)
+  const availableYearMonths = useMemo(() => {
+    const map = new Map<string, number>();
+    receipts.forEach((rcpt) => {
+      const ym = extractYearMonthFromDate(rcpt.data, rcpt.scannedAt);
+      map.set(ym, (map.get(ym) || 0) + 1);
+    });
+    return Array.from(map.entries())
+      .map(([ym, count]) => ({ ym, count }))
+      .sort((a, b) => {
+        if (a.ym === 'Sem Data') return 1;
+        if (b.ym === 'Sem Data') return -1;
+        return b.ym.localeCompare(a.ym);
+      });
+  }, [receipts]);
+
   // Pagination State for Receipts
   const [pageSize, setPageSize] = useState<number>(25);
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -64,6 +84,12 @@ export function NfAppTab({
   // Filter and Sort Receipts
   const filteredReceipts = useMemo(() => {
     let list = receipts.filter(rcpt => {
+      // Filter by Year-Month
+      if (selectedYearMonth) {
+        const ym = extractYearMonthFromDate(rcpt.data, rcpt.scannedAt);
+        if (ym !== selectedYearMonth) return false;
+      }
+
       const matchSearch = 
         (rcpt.razaoSocial || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         (rcpt.data || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -108,7 +134,7 @@ export function NfAppTab({
     });
 
     return list;
-  }, [receipts, searchTerm, statusFilter, sortField, sortAsc]);
+  }, [receipts, selectedYearMonth, searchTerm, statusFilter, sortField, sortAsc]);
 
   // Totals calculations
   const totalNotas = receipts.length;
@@ -117,10 +143,17 @@ export function NfAppTab({
   const totalConferidas = receipts.filter(r => r.conferido === 'Sim').length;
   const totalPendentes = totalNotas - totalConferidas;
 
+  const isFiltered = Boolean(selectedYearMonth || searchTerm || statusFilter !== 'all');
+  const filteredNotasCount = filteredReceipts.length;
+  const filteredItensCount = filteredReceipts.reduce((acc, r) => acc + (r.itens?.length || 0), 0);
+  const filteredValorTotal = filteredReceipts.reduce((acc, r) => acc + (r.valorTotal || 0), 0);
+  const filteredConferidasCount = filteredReceipts.filter(r => r.conferido === 'Sim').length;
+  const filteredPendentesCount = filteredNotasCount - filteredConferidasCount;
+
   // Auto-reset page on search, filter, sort, or pageSize change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, statusFilter, sortField, sortAsc, pageSize]);
+  }, [searchTerm, selectedYearMonth, statusFilter, sortField, sortAsc, pageSize]);
 
   const totalReceiptsCount = filteredReceipts.length;
   const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(totalReceiptsCount / pageSize));
@@ -410,10 +443,10 @@ export function NfAppTab({
             </span>
             <div className="flex items-baseline gap-1 mt-1">
               <span className="text-xl font-black text-slate-900 dark:text-white">
-                {totalNotas}
+                {isFiltered ? filteredNotasCount : totalNotas}
               </span>
               <span className="text-xs text-slate-500 dark:text-slate-400">
-                emitidas
+                {isFiltered ? `de ${totalNotas}` : 'emitidas'}
               </span>
             </div>
           </div>
@@ -424,10 +457,10 @@ export function NfAppTab({
             </span>
             <div className="flex items-baseline gap-1 mt-1">
               <span className="text-xl font-black text-slate-900 dark:text-white">
-                {totalItens}
+                {isFiltered ? filteredItensCount : totalItens}
               </span>
               <span className="text-xs text-slate-500 dark:text-slate-400">
-                produtos
+                {isFiltered ? `de ${totalItens}` : 'produtos'}
               </span>
             </div>
           </div>
@@ -438,7 +471,7 @@ export function NfAppTab({
             </span>
             <div className="flex items-baseline gap-1 mt-1">
               <span className="text-xl font-black text-emerald-700 dark:text-emerald-300">
-                R$ {totalValor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                R$ {(isFiltered ? filteredValorTotal : totalValor).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
             </div>
           </div>
@@ -449,10 +482,10 @@ export function NfAppTab({
             </span>
             <div className="flex items-center gap-2 mt-1">
               <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300">
-                {totalConferidas} Sim
+                {isFiltered ? filteredConferidasCount : totalConferidas} Sim
               </span>
               <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
-                {totalPendentes} -
+                {isFiltered ? filteredPendentesCount : totalPendentes} -
               </span>
             </div>
           </div>
@@ -460,63 +493,145 @@ export function NfAppTab({
       </div>
 
       {/* Filter and Search Bar */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-        {/* Search */}
-        <div className="relative flex-1">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-          <input
-            id="search-nf-input"
-            type="text"
-            placeholder="Buscar por Data, Razão Social, Número ou Valor..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs sm:text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-          />
-          {searchTerm && (
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-4 sm:p-5 shadow-xs space-y-3.5">
+        <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 sm:gap-4">
+          {/* Search Input */}
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+            <input
+              id="search-nf-input"
+              type="text"
+              placeholder="Buscar por Data, Razão Social, Número ou Valor..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl text-xs sm:text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+            {searchTerm && (
+              <button
+                onClick={() => setSearchTerm('')}
+                className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 cursor-pointer"
+                title="Limpar busca"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+
+          {/* ANO-MÊS Slicer Box (exact design from Tab 2) */}
+          <div className="w-full sm:w-64 lg:w-72 shrink-0">
+            <SlicerBox
+              id="slicer-box-yearmonth-tab3"
+              title="ANO-MÊS"
+              icon={<Calendar className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />}
+              options={availableYearMonths.map((y) => ({
+                id: y.ym,
+                label: y.ym,
+                count: y.count
+              }))}
+              selectedId={selectedYearMonth}
+              onSelect={setSelectedYearMonth}
+              monoFont={true}
+            />
+          </div>
+
+          {/* Filter by Status */}
+          <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 p-1.5 rounded-2xl border border-slate-200 dark:border-slate-700 text-xs self-start lg:self-center shrink-0">
             <button
-              onClick={() => setSearchTerm('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              onClick={() => setStatusFilter('all')}
+              className={`px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer ${
+                statusFilter === 'all'
+                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
             >
-              ✕
+              Todas ({receipts.length})
             </button>
-          )}
+            <button
+              onClick={() => setStatusFilter('sim')}
+              className={`px-3 py-1.5 rounded-xl font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                statusFilter === 'sim'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              <span>Sim ({isFiltered ? filteredConferidasCount : totalConferidas})</span>
+            </button>
+            <button
+              onClick={() => setStatusFilter('pendente')}
+              className={`px-3 py-1.5 rounded-xl font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                statusFilter === 'pendente'
+                  ? 'bg-slate-700 text-white shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              <Clock className="w-3.5 h-3.5" />
+              <span>- ({isFiltered ? filteredPendentesCount : totalPendentes})</span>
+            </button>
+          </div>
         </div>
 
-        {/* Filter by Status */}
-        <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700 text-xs self-start sm:self-auto">
-          <button
-            onClick={() => setStatusFilter('all')}
-            className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
-              statusFilter === 'all'
-                ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-            }`}
-          >
-            Todas ({receipts.length})
-          </button>
-          <button
-            onClick={() => setStatusFilter('sim')}
-            className={`px-3 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1 ${
-              statusFilter === 'sim'
-                ? 'bg-emerald-600 text-white shadow-xs'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-            }`}
-          >
-            <CheckCircle2 className="w-3.5 h-3.5" />
-            <span>Sim ({totalConferidas})</span>
-          </button>
-          <button
-            onClick={() => setStatusFilter('pendente')}
-            className={`px-3 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1 ${
-              statusFilter === 'pendente'
-                ? 'bg-slate-700 text-white shadow-xs'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-            }`}
-          >
-            <Clock className="w-3.5 h-3.5" />
-            <span>- ({totalPendentes})</span>
-          </button>
-        </div>
+        {/* Active Filters Summary Strip */}
+        {(selectedYearMonth || searchTerm || statusFilter !== 'all') && (
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-slate-500 dark:text-slate-400 font-semibold">Filtros ativos:</span>
+              {selectedYearMonth && (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-sky-100 dark:bg-sky-950 text-sky-800 dark:text-sky-200 font-bold border border-sky-200 dark:border-sky-800">
+                  <Calendar className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
+                  <span>Ano-Mês: <strong className="font-mono">{selectedYearMonth}</strong></span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedYearMonth(null)}
+                    className="text-sky-600 hover:text-rose-500 dark:text-sky-400 dark:hover:text-rose-400 ml-1 p-0.5 rounded cursor-pointer"
+                    title="Remover filtro de ano-mês"
+                  >
+                    ✕
+                  </button>
+                </span>
+              )}
+              {searchTerm && (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold border border-slate-200 dark:border-slate-700">
+                  <span>Busca: "{searchTerm}"</span>
+                  <button
+                    type="button"
+                    onClick={() => setSearchTerm('')}
+                    className="text-slate-500 hover:text-rose-500 ml-1 p-0.5 rounded cursor-pointer"
+                    title="Limpar busca"
+                  >
+                    ✕
+                  </button>
+                </span>
+              )}
+              {statusFilter !== 'all' && (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold border border-slate-200 dark:border-slate-700">
+                  <span>Status: {statusFilter === 'sim' ? 'Conferidas (Sim)' : 'Pendentes (-)'}</span>
+                  <button
+                    type="button"
+                    onClick={() => setStatusFilter('all')}
+                    className="text-slate-500 hover:text-rose-500 ml-1 p-0.5 rounded cursor-pointer"
+                    title="Limpar filtro de status"
+                  >
+                    ✕
+                  </button>
+                </span>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedYearMonth(null);
+                setSearchTerm('');
+                setStatusFilter('all');
+              }}
+              className="text-xs font-bold text-rose-600 dark:text-rose-400 hover:underline cursor-pointer flex items-center gap-1"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span>Limpar Todos os Filtros</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Selection Action Bar (Shown when 1 or more receipts are selected) */}

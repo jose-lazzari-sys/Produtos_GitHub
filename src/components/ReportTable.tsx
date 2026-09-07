@@ -4,12 +4,13 @@ import {
   RotateCcw,
   Table as TableIcon,
   BarChart3,
+  PieChart,
   ListFilter,
   X,
   Sparkles
 } from 'lucide-react';
 import { NFCeItem, NFCeReceipt } from '../types';
-import { parseDateToTimestamp } from '../utils/storage';
+import { parseDateToTimestamp, extractYearMonthFromDate } from '../utils/storage';
 import { extractPesoKg, extractVolumeLitros, getItemAlimentacaoWeight } from '../utils/weightUtils';
 import { ReportSlicers, SlicerMetrics } from './ReportSlicers';
 import { ReportMatrixView, MatrixGroup } from './ReportMatrixView';
@@ -78,7 +79,7 @@ const EXCEL_STRUCTURE = [
 ];
 
 // Normalize helpers
-function normalizeTipo(tipo?: string): string {
+export function normalizeTipo(tipo?: string): string {
   if (!tipo) return '';
   const t = tipo.trim().toLowerCase();
   if (t.includes('alimen') || t.includes('comida')) return 'Alimentação';
@@ -87,29 +88,13 @@ function normalizeTipo(tipo?: string): string {
   return tipo.trim();
 }
 
-function normalizeProduto(produto?: string, _tipo?: string): string {
+export function normalizeProduto(produto?: string, _tipo?: string): string {
   if (!produto) return 'outros';
   return produto.trim();
 }
 
 function getItemYearMonth(dateStr?: string): string {
-  if (!dateStr) return 'Sem Data';
-  const ts = parseDateToTimestamp(dateStr);
-  if (!ts) {
-    const matchBR = dateStr.match(/\d{1,2}\/(\d{1,2})\/(\d{4})/);
-    if (matchBR) {
-      return `${matchBR[2]}-${matchBR[1].padStart(2, '0')}`;
-    }
-    const matchISO = dateStr.match(/^(\d{4})-(\d{1,2})/);
-    if (matchISO) {
-      return `${matchISO[1]}-${matchISO[2].padStart(2, '0')}`;
-    }
-    return 'Sem Data';
-  }
-  const d = new Date(ts);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  return `${y}-${m}`;
+  return extractYearMonthFromDate(dateStr);
 }
 
 export interface ReportTableProps {
@@ -182,6 +167,7 @@ export const ReportTable: React.FC<ReportTableProps> = ({
 
   // Items filtered by all criteria EXCEPT Year-Month
   const itemsForYearMonth = useMemo(() => {
+    if (!selectedTipo && !selectedProduto && !selectedData) return searchFilteredBase;
     return searchFilteredBase.filter((item) => {
       if (selectedTipo && normalizeTipo(item.tipo) !== selectedTipo) return false;
       if (selectedProduto) {
@@ -195,6 +181,7 @@ export const ReportTable: React.FC<ReportTableProps> = ({
 
   // Items filtered by all criteria EXCEPT Tipo
   const itemsForTipo = useMemo(() => {
+    if (!selectedYearMonth && !selectedProduto && !selectedData) return searchFilteredBase;
     return searchFilteredBase.filter((item) => {
       if (selectedYearMonth && getItemYearMonth(item.data) !== selectedYearMonth) return false;
       if (selectedProduto) {
@@ -208,6 +195,7 @@ export const ReportTable: React.FC<ReportTableProps> = ({
 
   // Items filtered by all criteria EXCEPT Produto
   const itemsForProduto = useMemo(() => {
+    if (!selectedYearMonth && !selectedTipo && !selectedData) return searchFilteredBase;
     return searchFilteredBase.filter((item) => {
       if (selectedYearMonth && getItemYearMonth(item.data) !== selectedYearMonth) return false;
       if (selectedTipo && normalizeTipo(item.tipo) !== selectedTipo) return false;
@@ -218,6 +206,7 @@ export const ReportTable: React.FC<ReportTableProps> = ({
 
   // Items filtered by all criteria EXCEPT Data
   const itemsForData = useMemo(() => {
+    if (!selectedYearMonth && !selectedTipo && !selectedProduto) return searchFilteredBase;
     return searchFilteredBase.filter((item) => {
       if (selectedYearMonth && getItemYearMonth(item.data) !== selectedYearMonth) return false;
       if (selectedTipo && normalizeTipo(item.tipo) !== selectedTipo) return false;
@@ -229,7 +218,7 @@ export const ReportTable: React.FC<ReportTableProps> = ({
     });
   }, [searchFilteredBase, selectedYearMonth, selectedTipo, selectedProduto]);
 
-  // Available Year-Months with counts
+  // Available Year-Months with counts (sorted most recent to oldest)
   const availableYearMonths = useMemo(() => {
     const ymMap = new Map<string, number>();
     itemsForYearMonth.forEach((it) => {
@@ -241,7 +230,7 @@ export const ReportTable: React.FC<ReportTableProps> = ({
       .sort((a, b) => {
         if (a.ym === 'Sem Data') return 1;
         if (b.ym === 'Sem Data') return -1;
-        return a.ym.localeCompare(b.ym);
+        return b.ym.localeCompare(a.ym);
       });
   }, [itemsForYearMonth]);
 
@@ -288,7 +277,7 @@ export const ReportTable: React.FC<ReportTableProps> = ({
       .sort((a, b) => a.prod.localeCompare(b.prod));
   }, [itemsForProduto]);
 
-  // Available Dates with counts
+  // Available Dates with counts (sorted most recent to oldest)
   const availableDatas = useMemo(() => {
     const dMap = new Map<string, { count: number; timestamp: number }>();
     itemsForData.forEach((it) => {
@@ -305,7 +294,12 @@ export const ReportTable: React.FC<ReportTableProps> = ({
 
     return Array.from(dMap.entries())
       .map(([dt, info]) => ({ dt, count: info.count, timestamp: info.timestamp }))
-      .sort((a, b) => a.timestamp - b.timestamp);
+      .sort((a, b) => {
+        if (!a.timestamp && !b.timestamp) return b.dt.localeCompare(a.dt);
+        if (!a.timestamp) return 1;
+        if (!b.timestamp) return -1;
+        return b.timestamp - a.timestamp;
+      });
   }, [itemsForData]);
 
   // Auto-clear selections that become invalid when another slicer changes
@@ -389,11 +383,33 @@ export const ReportTable: React.FC<ReportTableProps> = ({
       ? EXCEL_STRUCTURE.filter((g) => g.tipo === selectedTipo)
       : EXCEL_STRUCTURE;
 
+    // Single-pass O(N) grouping into Map for ultra-fast mobile calculations
+    const itemsByTipoProd = new Map<string, NFCeItem[]>();
+    const itemsByTipo = new Map<string, NFCeItem[]>();
+
+    filteredItems.forEach((it) => {
+      const t = normalizeTipo(it.tipo);
+      const p = normalizeProduto(it.produto, t).toLowerCase();
+      
+      const tipoList = itemsByTipo.get(t);
+      if (tipoList) {
+        tipoList.push(it);
+      } else {
+        itemsByTipo.set(t, [it]);
+      }
+
+      const key = `${t}___${p}`;
+      const prodList = itemsByTipoProd.get(key);
+      if (prodList) {
+        prodList.push(it);
+      } else {
+        itemsByTipoProd.set(key, [it]);
+      }
+    });
+
     return baseGroups
       .map((group) => {
-        const groupItems = filteredItems.filter(
-          (it) => normalizeTipo(it.tipo) === group.tipo
-        );
+        const groupItems = itemsByTipo.get(group.tipo) || [];
 
         const groupTotalValor = groupItems.reduce(
           (acc, it) => acc + (Number(it.valorTotal) || 0),
@@ -406,10 +422,7 @@ export const ReportTable: React.FC<ReportTableProps> = ({
           : group.products;
 
         const rows = targetProducts.map((prodName) => {
-          const prodItems = groupItems.filter((it) => {
-            const normP = normalizeProduto(it.produto, group.tipo);
-            return normP.toLowerCase() === prodName.toLowerCase();
-          });
+          const prodItems = itemsByTipoProd.get(`${group.tipo}___${prodName.toLowerCase()}`) || [];
 
           const prodValor = prodItems.reduce(
             (acc, it) => acc + (Number(it.valorTotal) || 0),
@@ -474,7 +487,7 @@ export const ReportTable: React.FC<ReportTableProps> = ({
   }, [filteredItems, metrics.totalValor, selectedTipo, selectedProduto]);
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-300">
+    <div className="space-y-6 pb-16 sm:pb-6 animate-in fade-in duration-300">
       {/* TOP BAR: SEARCH INPUT & VIEW MODE SELECTOR */}
       <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm p-4 sm:p-5 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
         {/* Search Input: "Busca por descrição, mercado ou data..." */}
@@ -500,64 +513,69 @@ export const ReportTable: React.FC<ReportTableProps> = ({
         </div>
 
         {/* View Mode Buttons: [ Visualizar Itens ] [ Tabela Matriz ] [ Visão Gráfica ] */}
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Button 1: Visualizar Itens (Placed right in front as requested) */}
-          <button
-            type="button"
-            onClick={() => setViewMode('items')}
-            className={`py-2 px-3.5 rounded-2xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shadow-xs ${
-              viewMode === 'items'
-                ? 'bg-sky-600 text-white shadow-md shadow-sky-500/20 ring-2 ring-sky-400'
-                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-            }`}
-          >
-            <ListFilter className="w-4 h-4" />
-            <span>Visualizar Itens</span>
-            <span
-              className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+          <div className="grid grid-cols-3 sm:flex sm:flex-wrap items-center gap-1.5 sm:gap-2">
+            {/* Button 1: Visualizar Itens */}
+            <button
+              type="button"
+              onClick={() => setViewMode('items')}
+              className={`py-2 px-2 sm:px-3.5 rounded-2xl text-xs font-bold transition-all flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 cursor-pointer shadow-xs ${
                 viewMode === 'items'
-                  ? 'bg-sky-700 text-sky-100'
-                  : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400'
+                  ? 'bg-sky-600 text-white shadow-md shadow-sky-500/20 ring-2 ring-sky-400'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
               }`}
             >
-              {filteredItems.length}
-            </span>
-          </button>
+              <div className="flex items-center gap-1">
+                <ListFilter className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+                <span className="hidden sm:inline">Visualizar </span>
+                <span>Itens</span>
+              </div>
+              <span
+                className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                  viewMode === 'items'
+                    ? 'bg-sky-700 text-sky-100'
+                    : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400'
+                }`}
+              >
+                {filteredItems.length}
+              </span>
+            </button>
 
-          {/* Button 2: Tabela Matriz */}
-          <button
-            type="button"
-            onClick={() => setViewMode('matrix')}
-            className={`py-2 px-3.5 rounded-2xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shadow-xs ${
-              viewMode === 'matrix'
-                ? 'bg-sky-600 text-white shadow-md shadow-sky-500/20 ring-2 ring-sky-400'
-                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-            }`}
-          >
-            <TableIcon className="w-4 h-4" />
-            <span>Tabela Matriz</span>
-          </button>
+            {/* Button 2: Tabela Matriz */}
+            <button
+              type="button"
+              onClick={() => setViewMode('matrix')}
+              className={`py-2 px-2 sm:px-3.5 rounded-2xl text-xs font-bold transition-all flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 cursor-pointer shadow-xs ${
+                viewMode === 'matrix'
+                  ? 'bg-sky-600 text-white shadow-md shadow-sky-500/20 ring-2 ring-sky-400'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+              }`}
+            >
+              <TableIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+              <span>Matriz</span>
+            </button>
 
-          {/* Button 3: Visão Gráfica */}
-          <button
-            type="button"
-            onClick={() => setViewMode('charts')}
-            className={`py-2 px-3.5 rounded-2xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shadow-xs ${
-              viewMode === 'charts'
-                ? 'bg-sky-600 text-white shadow-md shadow-sky-500/20 ring-2 ring-sky-400'
-                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-            }`}
-          >
-            <BarChart3 className="w-4 h-4" />
-            <span>Visão Gráfica</span>
-          </button>
+            {/* Button 3: Visão Gráfica (Rosca e Barras) */}
+            <button
+              type="button"
+              onClick={() => setViewMode('charts')}
+              className={`py-2 px-2 sm:px-3.5 rounded-2xl text-xs font-bold transition-all flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 cursor-pointer shadow-xs ${
+                viewMode === 'charts'
+                  ? 'bg-sky-600 text-white shadow-md shadow-sky-500/20 ring-2 ring-sky-400'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+              }`}
+            >
+              <BarChart3 className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 text-emerald-500" />
+              <span>Gráficos (Rosca / Barras)</span>
+            </button>
+          </div>
 
           {/* Clear Filters button */}
           {hasActiveFilters && (
             <button
               type="button"
               onClick={handleClearAllFilters}
-              className="py-2 px-3 rounded-2xl border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-300 text-xs font-bold hover:bg-rose-100 dark:hover:bg-rose-900/60 transition-colors flex items-center gap-1.5 cursor-pointer"
+              className="py-2 px-3 rounded-2xl border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-300 text-xs font-bold hover:bg-rose-100 dark:hover:bg-rose-900/60 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
               title="Limpar todos os filtros e busca"
             >
               <RotateCcw className="w-3.5 h-3.5" />
@@ -607,11 +625,18 @@ export const ReportTable: React.FC<ReportTableProps> = ({
           totalItensCount={filteredItems.length}
           hasActiveFilters={hasActiveFilters}
           globalTotalValor={metrics.totalValor}
+          onSwitchToCharts={() => setViewMode('charts')}
         />
       )}
 
       {viewMode === 'charts' && (
         <ReportChartsView
+          items={items}
+          selectedYearMonth={selectedYearMonth}
+          selectedTipo={selectedTipo}
+          selectedProduto={selectedProduto}
+          selectedData={selectedData}
+          searchQuery={searchQuery}
           matrixData={matrixData}
           globalTotalValor={metrics.totalValor}
         />

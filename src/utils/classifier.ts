@@ -206,6 +206,36 @@ export function getLearnedMemory(): Map<string, LearnedClassification> {
   return learnedCache;
 }
 
+// In-memory lookup cache for classifyProduct to avoid re-running expensive fuzzy/similarity scans
+const classificationResultCache = new Map<string, { tipo: string; produto: string; detalhe: string }>();
+
+let saveMemoryTimer: any = null;
+
+export function flushLearnedMemoryToStorage(): void {
+  if (saveMemoryTimer) {
+    clearTimeout(saveMemoryTimer);
+    saveMemoryTimer = null;
+  }
+  if (!learnedCache) return;
+  try {
+    const obj: Record<string, LearnedClassification> = {};
+    learnedCache.forEach((val, key) => {
+      obj[key] = val;
+    });
+    localStorage.setItem(LEARNED_MEMORY_KEY, JSON.stringify(obj));
+  } catch (e) {
+    console.error('Error saving learned classifications:', e);
+  }
+}
+
+function scheduleSaveLearnedMemory(): void {
+  if (saveMemoryTimer) return;
+  saveMemoryTimer = setTimeout(() => {
+    saveMemoryTimer = null;
+    flushLearnedMemoryToStorage();
+  }, 400);
+}
+
 /**
  * Saves a newly learned or user-edited classification into the intelligent historical memory
  */
@@ -232,16 +262,11 @@ export function learnItemClassification(
     count
   });
 
-  // Persist to localStorage
-  try {
-    const obj: Record<string, LearnedClassification> = {};
-    memory.forEach((val, key) => {
-      obj[key] = val;
-    });
-    localStorage.setItem(LEARNED_MEMORY_KEY, JSON.stringify(obj));
-  } catch (e) {
-    console.error('Error saving learned classifications:', e);
-  }
+  classificationResultCache.delete(descricao);
+  classificationResultCache.delete(normalized);
+
+  // Debounced persistence avoids locking the mobile thread with hundreds of synchronous disk writes
+  scheduleSaveLearnedMemory();
 }
 
 /**
@@ -266,56 +291,79 @@ export function classifyProduct(
     };
   }
 
+  // Check instant memory cache first (0ms latency on mobile)
+  if (!databaseItems && classificationResultCache.has(descricao)) {
+    return classificationResultCache.get(descricao)!;
+  }
+
   const normalized = normalizeText(descricao);
   const coreTokens = extractCoreTokens(descricao);
+
+  let result: { tipo: string; produto: string; detalhe: string };
 
   // 1. Check exact match in learned memory
   const memory = getLearnedMemory();
   if (memory.has(normalized)) {
     const learned = memory.get(normalized)!;
-    return {
+    result = {
       tipo: learned.tipo,
       produto: learned.produto,
       detalhe: learned.detalhe
     };
-  }
-
-  // 2. Check if provided databaseItems has an exact or high-confidence match
-  if (databaseItems && databaseItems.length > 0) {
+  } else if (databaseItems && databaseItems.length > 0) {
+    // 2. Check if provided databaseItems has an exact or high-confidence match
+    let foundInDb: { tipo: string; produto: string; detalhe: string } | null = null;
     for (const item of databaseItems) {
       if (!item.descricao || !item.tipo || item.tipo === 'Outros') continue;
       const itemNorm = normalizeText(item.descricao);
       if (itemNorm === normalized) {
         // Learn it automatically
         learnItemClassification(descricao, item.tipo, item.produto || 'Outros', item.detalhe);
-        return {
+        foundInDb = {
           tipo: normalizeTipo(item.tipo),
           produto: normalizeProduto(item.produto, item.tipo),
           detalhe: item.detalhe?.trim() || 'Outros'
         };
+        break;
       }
     }
+    if (foundInDb) {
+      result = foundInDb;
+    } else {
+      result = findBestMatch(memory, coreTokens, normalized);
+    }
+  } else {
+    result = findBestMatch(memory, coreTokens, normalized);
   }
 
-  // 3. Search learned memory & database for the highest token overlap or string similarity
+  if (!databaseItems) {
+    classificationResultCache.set(descricao, result);
+    classificationResultCache.set(normalized, result);
+  }
+
+  return result;
+}
+
+function findBestMatch(
+  memory: Map<string, LearnedClassification>,
+  coreTokens: string[],
+  normalized: string
+): { tipo: string; produto: string; detalhe: string } {
   let bestMatch: { tipo: string; produto: string; detalhe: string; score: number } | null = null;
 
-  // Search in memory
   memory.forEach((val, key) => {
     if (val.tipo === 'Outros') return;
 
-    // Token subset test: if all core tokens of this description exist in the learned one, or vice-versa
     const keyTokens = extractCoreTokens(key);
     const sharedTokens = coreTokens.filter(t => keyTokens.includes(t));
     
     let score = 0;
     if (coreTokens.length > 0 && sharedTokens.length === coreTokens.length) {
-      score = 0.95; // Perfect token subset match
+      score = 0.95;
     } else if (coreTokens.length > 0 && sharedTokens.length > 0) {
       score = sharedTokens.length / Math.max(coreTokens.length, keyTokens.length);
     }
 
-    // Also check string bigram similarity
     const sim = calculateSimilarity(normalized, key);
     if (sim > score) score = sim;
 
@@ -337,7 +385,6 @@ export function classifyProduct(
     };
   }
 
-  // Fallback to "Outros" if not found in historical memory or database
   return {
     tipo: 'Outros',
     produto: 'Outros',

@@ -145,10 +145,12 @@ export async function decodeFromVideoElement(
       }
     } catch {}
 
-    // ZXing QRCodeReader on ROI
-    const zxText = decodeZxingFromImageData(roiImageData);
-    if (zxText) {
-      return { text: zxText, source: 'zxing' };
+    // ZXing QRCodeReader on ROI (only run if native detector is absent or throttled, saving massive mobile CPU)
+    if (!detector || checkFullFrame) {
+      const zxText = decodeZxingFromImageData(roiImageData);
+      if (zxText) {
+        return { text: zxText, source: 'zxing' };
+      }
     }
   }
 
@@ -172,9 +174,11 @@ export async function decodeFromVideoElement(
         }
       } catch {}
 
-      const zxFullText = decodeZxingFromImageData(fullImgData);
-      if (zxFullText) {
-        return { text: zxFullText, source: 'zxing' };
+      if (!detector) {
+        const zxFullText = decodeZxingFromImageData(fullImgData);
+        if (zxFullText) {
+          return { text: zxFullText, source: 'zxing' };
+        }
       }
     }
   }

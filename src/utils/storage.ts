@@ -1066,6 +1066,37 @@ export function parseDateToTimestamp(dateStr?: string): number {
 }
 
 /**
+ * Extracts standard YYYY-MM year-month string from a date string or timestamp.
+ * Returns e.g. "2025-01" or "Sem Data".
+ */
+export function extractYearMonthFromDate(dateStr?: string, fallbackStr?: string): string {
+  const targetStr = dateStr?.trim() || fallbackStr?.trim() || '';
+  if (!targetStr) return 'Sem Data';
+
+  // Fast regex matching for BR format (DD/MM/YYYY)
+  const matchBR = targetStr.match(/\d{1,2}\/(\d{1,2})\/(\d{4})/);
+  if (matchBR) {
+    return `${matchBR[2]}-${matchBR[1].padStart(2, '0')}`;
+  }
+
+  // Fast regex matching for ISO format (YYYY-MM-DD)
+  const matchISO = targetStr.match(/^(\d{4})-(\d{1,2})/);
+  if (matchISO) {
+    return `${matchISO[1]}-${matchISO[2].padStart(2, '0')}`;
+  }
+
+  const ts = parseDateToTimestamp(targetStr);
+  if (ts) {
+    const d = new Date(ts);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    return `${y}-${m}`;
+  }
+
+  return 'Sem Data';
+}
+
+/**
  * Reconciles stored receipts with items, ensuring that if items exist,
  * corresponding notes/receipts are structured with accurate totals and item counts.
  */

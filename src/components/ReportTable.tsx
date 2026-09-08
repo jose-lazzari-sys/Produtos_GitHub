@@ -109,6 +109,7 @@ export interface ReportTableProps {
   onSwitchToScanner: () => void;
   onSwitchToActions?: () => void;
   onRestoreBackup?: (items: NFCeItem[], receipts: NFCeReceipt[]) => void;
+  isReadOnly?: boolean;
 }
 
 export const ReportTable: React.FC<ReportTableProps> = ({
@@ -120,6 +121,7 @@ export const ReportTable: React.FC<ReportTableProps> = ({
   onLoadSample,
   onEditClick,
   onSwitchToScanner,
+  isReadOnly = false,
 }) => {
   // Slicers State
   const [selectedYearMonth, setSelectedYearMonth] = useState<string | null>(null);
@@ -616,6 +618,7 @@ export const ReportTable: React.FC<ReportTableProps> = ({
           onSwitchToScanner={onSwitchToScanner}
           onLoadSample={onLoadSample}
           onClearFilters={handleClearAllFilters}
+          isReadOnly={isReadOnly}
         />
       )}
 

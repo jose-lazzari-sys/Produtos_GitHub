@@ -33,13 +33,15 @@ interface AppActionsTabProps {
   receipts: NFCeReceipt[];
   onRestoreBackup: (items: NFCeItem[], receipts: NFCeReceipt[]) => void;
   onGoToReport?: () => void;
+  isReadOnly?: boolean;
 }
 
 export const AppActionsTab: React.FC<AppActionsTabProps> = ({
   items,
   receipts,
   onRestoreBackup,
-  onGoToReport
+  onGoToReport,
+  isReadOnly = false
 }) => {
   const [copiedSuccess, setCopiedSuccess] = useState(false);
   const [isProcedureModalOpen, setIsProcedureModalOpen] = useState(false);
@@ -496,9 +498,19 @@ export const AppActionsTab: React.FC<AppActionsTabProps> = ({
               <button
                 id="action-import-json-backup-btn"
                 type="button"
-                onClick={() => jsonFileInputRef.current?.click()}
-                className="py-3.5 px-4 rounded-2xl border-2 border-indigo-500/40 dark:border-indigo-500/50 hover:bg-indigo-50 dark:hover:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-bold text-xs sm:text-sm transition-colors flex items-center justify-center gap-2 min-h-[48px] cursor-pointer shadow-xs"
-                title="Carregar arquivo JSON de backup para o aplicativo offline"
+                onClick={() => {
+                  if (isReadOnly) {
+                    setNotice({
+                      type: 'error',
+                      text: 'Ação não permitida em Modo Consulta (jal_ver). Para carregar dados, use o Código Administrador.'
+                    });
+                    return;
+                  }
+                  jsonFileInputRef.current?.click();
+                }}
+                disabled={isReadOnly}
+                className="py-3.5 px-4 rounded-2xl border-2 border-indigo-500/40 dark:border-indigo-500/50 hover:bg-indigo-50 dark:hover:bg-indigo-950/60 disabled:opacity-40 disabled:cursor-not-allowed text-indigo-700 dark:text-indigo-300 font-bold text-xs sm:text-sm transition-colors flex items-center justify-center gap-2 min-h-[48px] cursor-pointer shadow-xs"
+                title={isReadOnly ? "Desativado em Modo Consulta (jal_ver)" : "Carregar arquivo JSON de backup para o aplicativo offline"}
               >
                 <FileUp className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
                 <span>Carregar JSON (Offline)</span>

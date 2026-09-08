@@ -8,6 +8,7 @@ interface ReceiptSummaryCardProps {
   onSaveToHistory: (receipt: NFCeReceipt) => void;
   onDiscard: () => void;
   onGoToReport: () => void;
+  isReadOnly?: boolean;
 }
 
 export const ReceiptSummaryCard: React.FC<ReceiptSummaryCardProps> = ({
@@ -15,6 +16,7 @@ export const ReceiptSummaryCard: React.FC<ReceiptSummaryCardProps> = ({
   onSaveToHistory,
   onDiscard,
   onGoToReport,
+  isReadOnly = false,
 }) => {
   const [receipt, setReceipt] = useState<NFCeReceipt>(initialReceipt);
   const [isEditingHeader, setIsEditingHeader] = useState(false);
@@ -67,14 +69,16 @@ export const ReceiptSummaryCard: React.FC<ReceiptSummaryCardProps> = ({
                 <h3 className="text-lg sm:text-xl font-bold line-clamp-1 tracking-tight">
                   {receipt.razaoSocial}
                 </h3>
-                <button
-                  type="button"
-                  onClick={() => setIsEditingHeader(true)}
-                  title="Editar Razão Social / Data"
-                  className="p-1 rounded bg-emerald-500/50 hover:bg-emerald-500 text-emerald-100 hover:text-white transition-colors"
-                >
-                  <Edit2 className="w-3.5 h-3.5" />
-                </button>
+                {!isReadOnly && (
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingHeader(true)}
+                    title="Editar Razão Social / Data"
+                    className="p-1 rounded bg-emerald-500/50 hover:bg-emerald-500 text-emerald-100 hover:text-white transition-colors"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-emerald-100/90 mt-0.5">
                 {receipt.cnpj && <span>CNPJ: {receipt.cnpj}</span>}
@@ -196,15 +200,21 @@ export const ReceiptSummaryCard: React.FC<ReceiptSummaryCardProps> = ({
               <Trash2 className="w-4 h-4 text-slate-400" />
               Descartar
             </button>
-            <button
-              id="save-receipt-to-history-btn"
-              type="button"
-              onClick={handleSave}
-              className="w-full sm:w-2/3 py-3.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-base font-bold shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2"
-            >
-              <Plus className="w-5 h-5" />
-              Salvar no LocalStorage ({receipt.itens.length} itens)
-            </button>
+            {isReadOnly ? (
+              <div className="w-full sm:w-2/3 py-3 px-4 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-xs font-semibold flex items-center justify-center gap-2">
+                <span>Modo Consulta (jal_ver): Inclusão de novas notas desativada</span>
+              </div>
+            ) : (
+              <button
+                id="save-receipt-to-history-btn"
+                type="button"
+                onClick={handleSave}
+                className="w-full sm:w-2/3 py-3.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-base font-bold shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2"
+              >
+                <Plus className="w-5 h-5" />
+                Salvar no LocalStorage ({receipt.itens.length} itens)
+              </button>
+            )}
           </>
         ) : (
           <div className="w-full space-y-3">

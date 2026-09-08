@@ -11,7 +11,9 @@ import {
   Info,
   Cloud,
   FileText,
-  BarChart3
+  BarChart3,
+  Eye,
+  Key
 } from 'lucide-react';
 import { NFCeItem, NFCeReceipt } from './types';
 import {
@@ -39,11 +41,22 @@ import {
   debouncedSyncToCloud,
   loadDataFromCloud,
   subscribeToCloudData,
-  subscribeToQuotaStatus
+  subscribeToQuotaStatus,
+  getSavedAccessCode,
+  validateAccessCode,
+  clearAccessCode,
+  loadSharedSpace,
+  syncSharedSpace,
+  debouncedSyncSharedSpace,
+  subscribeToSharedSpace,
+  mergeReceiptsWithCloud,
+  mergeItemsWithCloud,
+  AccessRole
 } from './utils/cloudSync';
 import { auth, onAuthStateChanged, User } from './lib/firebase';
 import { ReceiptSummaryCard } from './components/ReceiptSummaryCard';
 import { CloudSyncHeader } from './components/CloudSyncHeader';
+import { AccessCodeModal } from './components/AccessCodeModal';
 
 // Lazy-load heavy components to slash initial mobile bundle size from 2.4MB down to lightweight chunks
 const QRScanner = React.lazy(() =>
@@ -89,6 +102,12 @@ export default function App() {
   const [cloudBannerDismissed, setCloudBannerDismissed] = useState(false);
   const [isQuotaExceeded, setIsQuotaExceeded] = useState(false);
 
+  // Access Code State (Option A: jal_completo / jal_ver)
+  const [accessCode, setAccessCode] = useState<string>(() => getSavedAccessCode());
+  const [accessRole, setAccessRole] = useState<AccessRole | null>(() => validateAccessCode(getSavedAccessCode())?.role || null);
+  const [isAccessModalOpen, setIsAccessModalOpen] = useState(false);
+  const isReadOnly = accessRole === 'readonly';
+
   // Currently scanned receipt awaiting confirmation
   const [pendingReceipt, setPendingReceipt] = useState<NFCeReceipt | null>(null);
 
@@ -114,6 +133,78 @@ export default function App() {
       setIsDark(true);
     }
   }, []);
+
+  // Shared Space Realtime Sync (for Access Codes jal_completo and jal_ver)
+  useEffect(() => {
+    if (!accessRole) return;
+
+    setIsSyncing(true);
+
+    // Initial load from shared space
+    loadSharedSpace().then((data) => {
+      const localItems = getStoredItems();
+      const localReceipts = getStoredReceipts();
+
+      if (data && (data.items.length > 0 || data.receipts.length > 0)) {
+        // In admin role, safely merge to preserve local 'Sim' statuses marked on this device
+        const mergedReceipts = accessRole === 'admin'
+          ? mergeReceiptsWithCloud(localReceipts, data.receipts)
+          : (data.receipts.length > 0 ? data.receipts : localReceipts);
+        const mergedItems = accessRole === 'admin'
+          ? mergeItemsWithCloud(localItems, data.items)
+          : (data.items.length > 0 ? data.items : localItems);
+
+        setItems(mergedItems);
+        setReceipts(mergedReceipts);
+        saveStoredItems(mergedItems);
+        saveStoredReceipts(mergedReceipts);
+
+        // If this device had conferido === 'Sim' that was missing in the cloud, push merged back to cloud!
+        if (accessRole === 'admin') {
+          const hasUnsyncedConferido = mergedReceipts.some(mr => {
+            const cr = data.receipts.find(r => r.id === mr.id || (r.data === mr.data && r.razaoSocial === mr.razaoSocial));
+            return mr.conferido === 'Sim' && (!cr || cr.conferido !== 'Sim');
+          });
+          if (hasUnsyncedConferido) {
+            syncSharedSpace(mergedItems, mergedReceipts);
+          }
+        }
+      } else if (accessRole === 'admin' && (localItems.length > 0 || localReceipts.length > 0)) {
+        // Shared space is empty, initialize it with this admin device's local data
+        syncSharedSpace(localItems, localReceipts);
+      }
+      setIsSyncing(false);
+      setLastSyncedAt(new Date());
+    }).catch((err) => {
+      console.warn('Initial shared space load error:', err);
+      setIsSyncing(false);
+    });
+
+    // Realtime subscription to shared space
+    const unsubscribe = subscribeToSharedSpace(
+      (cloudItems, cloudReceipts) => {
+        if (cloudItems && cloudItems.length > 0) {
+          setItems(cloudItems);
+          saveStoredItems(cloudItems);
+        }
+        if (cloudReceipts && cloudReceipts.length > 0) {
+          setReceipts(cloudReceipts);
+          saveStoredReceipts(cloudReceipts);
+        }
+        setIsSyncing(false);
+        setLastSyncedAt(new Date());
+      },
+      (err) => {
+        console.warn('Shared space subscription error:', err);
+        setIsSyncing(false);
+      },
+      isReadOnly
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [accessRole]);
 
   // Listen to Firebase Auth state
   useEffect(() => {
@@ -168,10 +259,16 @@ export default function App() {
     };
   }, []);
 
-  // Helper to sync to Cloud whenever state changes if user is logged in
+  // Helper to sync to Cloud whenever state changes if user is logged in or admin code is active
   const syncChangesToCloud = (newItems: NFCeItem[], newReceipts: NFCeReceipt[]) => {
-    if (!user) return;
-    debouncedSyncToCloud(user.uid, newItems, newReceipts, user.email);
+    if (isReadOnly) return; // Strict safety: no changes pushed in read-only mode
+
+    if (user) {
+      debouncedSyncToCloud(user.uid, newItems, newReceipts, user.email);
+    }
+    if (accessRole === 'admin') {
+      debouncedSyncSharedSpace(newItems, newReceipts);
+    }
     setLastSyncedAt(new Date());
   };
 
@@ -203,6 +300,22 @@ export default function App() {
 
   // Force upload current local items to Firestore
   const handleForceUpload = async () => {
+    if (isReadOnly) return;
+    if (accessRole === 'admin') {
+      setIsSyncing(true);
+      try {
+        const currentItems = getStoredItems();
+        const currentReceipts = getStoredReceipts();
+        await syncSharedSpace(currentItems, currentReceipts);
+        setLastSyncedAt(new Date());
+      } catch (e) {
+        console.error('Erro ao subir dados para o espaço compartilhado:', e);
+      } finally {
+        setIsSyncing(false);
+      }
+      return;
+    }
+
     if (!user) {
       await handleLogin();
       return;
@@ -214,12 +327,28 @@ export default function App() {
 
   // Force download cloud items to current device
   const handleForceDownload = async () => {
-    if (!user) {
-      await handleLogin();
-      return;
-    }
     setIsSyncing(true);
     try {
+      if (accessRole) {
+        const cloudData = await loadSharedSpace();
+        if (cloudData) {
+          if (cloudData.items.length > 0) {
+            saveStoredItems(cloudData.items);
+            setItems(cloudData.items);
+          }
+          if (cloudData.receipts.length > 0) {
+            saveStoredReceipts(cloudData.receipts);
+            setReceipts(cloudData.receipts);
+          }
+          setLastSyncedAt(new Date());
+        }
+        return;
+      }
+
+      if (!user) {
+        await handleLogin();
+        return;
+      }
       const cloudData = await loadDataFromCloud(user.uid);
       if (cloudData) {
         if (cloudData.items.length > 0) {
@@ -241,6 +370,36 @@ export default function App() {
 
   // Manual sync button
   const handleManualSync = async () => {
+    if (accessRole) {
+      setIsSyncing(true);
+      try {
+        if (isReadOnly) {
+          const cloudData = await loadSharedSpace();
+          if (cloudData) {
+            if (cloudData.items.length > 0) {
+              saveStoredItems(cloudData.items);
+              setItems(cloudData.items);
+            }
+            if (cloudData.receipts.length > 0) {
+              saveStoredReceipts(cloudData.receipts);
+              setReceipts(cloudData.receipts);
+            }
+            setLastSyncedAt(new Date());
+          }
+        } else if (accessRole === 'admin') {
+          const currentItems = getStoredItems();
+          const currentReceipts = getStoredReceipts();
+          await syncSharedSpace(currentItems, currentReceipts);
+          setLastSyncedAt(new Date());
+        }
+      } catch (err) {
+        console.error('Manual sync error:', err);
+      } finally {
+        setIsSyncing(false);
+      }
+      return;
+    }
+
     if (!user) {
       handleLogin();
       return;
@@ -267,6 +426,10 @@ export default function App() {
 
   // Save parsed receipt into LocalStorage & Cloud
   const handleSavePendingReceipt = (receipt: NFCeReceipt) => {
+    if (isReadOnly) {
+      alert('Operação bloqueada em Modo Consulta (jal_ver). Para salvar novas notas fiscais, utilize o Código Administrador.');
+      return;
+    }
     const result = addReceiptAndItems(receipt);
     setItems(result.items);
     setReceipts(result.receipts);
@@ -280,6 +443,10 @@ export default function App() {
 
   // Update single item
   const handleUpdateItem = (updated: NFCeItem) => {
+    if (isReadOnly) {
+      alert('Operação bloqueada em Modo Consulta (jal_ver). Apenas visualização permitida.');
+      return;
+    }
     const updatedList = updateStoredItem(updated);
     const updatedReceipts = getStoredReceipts();
     setItems([...updatedList]);
@@ -289,11 +456,16 @@ export default function App() {
 
   // Open manual item creation modal
   const handleOpenAddManualItem = () => {
+    if (isReadOnly) {
+      alert('Operação bloqueada em Modo Consulta (jal_ver).');
+      return;
+    }
     setIsCreatingManualItem(true);
   };
 
   // Save new manually created item
   const handleSaveManualItem = (newItem: NFCeItem) => {
+    if (isReadOnly) return;
     const updatedList = addStoredItem(newItem);
     const updatedReceipts = getStoredReceipts();
     setItems([...updatedList]);
@@ -304,6 +476,10 @@ export default function App() {
 
   // Delete single item
   const handleDeleteItem = (itemId: string, itemObj?: NFCeItem) => {
+    if (isReadOnly) {
+      alert('Operação bloqueada em Modo Consulta (jal_ver).');
+      return;
+    }
     setItems((prevItems) => {
       const targetDesc = (itemObj?.descricao || '').trim().toLowerCase();
       const targetVal = Number(itemObj?.valorTotal || 0);
@@ -350,6 +526,7 @@ export default function App() {
 
   // Update all store names across stored items
   const handleUpdateAllStoreNames = (newName: string) => {
+    if (isReadOnly) return;
     const result = updateAllStoreNames(newName);
     setItems(result.items);
     setReceipts(result.receipts);
@@ -358,6 +535,7 @@ export default function App() {
 
   // Clear all items and receipts
   const handleClearAll = () => {
+    if (isReadOnly) return;
     clearAllStorage();
     setItems([]);
     setReceipts([]);
@@ -367,6 +545,7 @@ export default function App() {
 
   // Load sample dataset
   const handleLoadSample = () => {
+    if (isReadOnly) return;
     const sample = generateSampleData();
     const result = addReceiptAndItems(sample.receipt);
     setItems(result.items);
@@ -376,6 +555,7 @@ export default function App() {
 
   // Restore dataset from Backup JSON file
   const handleRestoreBackup = (restoredItems: NFCeItem[], restoredReceipts: NFCeReceipt[]) => {
+    if (isReadOnly) return;
     setItems(restoredItems);
     setReceipts(restoredReceipts);
     syncChangesToCloud(restoredItems, restoredReceipts);
@@ -388,6 +568,7 @@ export default function App() {
 
   // Update receipt conferido status ('Sim' | '-')
   const handleUpdateReceiptConferido = (receiptId: string, conferido: 'Sim' | '-') => {
+    if (isReadOnly) return;
     const result = updateReceiptConferido(receiptId, conferido);
     setReceipts(result.receipts);
     setItems(result.items);
@@ -396,6 +577,7 @@ export default function App() {
 
   // Bulk update all receipts conferido status ('Sim' | '-')
   const handleBulkUpdateConferido = (conferido: 'Sim' | '-') => {
+    if (isReadOnly) return;
     const result = bulkUpdateReceiptsConferido(conferido);
     setReceipts(result.receipts);
     setItems(result.items);
@@ -404,6 +586,7 @@ export default function App() {
 
   // Delete a receipt and its items
   const handleDeleteReceipt = (receiptId: string) => {
+    if (isReadOnly) return;
     const result = deleteReceiptAndItsItems(receiptId);
     setItems(result.items);
     setReceipts(result.receipts);
@@ -412,6 +595,7 @@ export default function App() {
 
   // Delete multiple receipts and their items in bulk
   const handleDeleteMultipleReceipts = (receiptIds: string[]) => {
+    if (isReadOnly) return;
     const result = deleteMultipleReceiptsAndTheirItems(receiptIds);
     setItems(result.items);
     setReceipts(result.receipts);
@@ -419,6 +603,10 @@ export default function App() {
   };
 
   const handleOpenXmlModal = (url?: string, initialError?: string) => {
+    if (isReadOnly) {
+      alert('Operação bloqueada em Modo Consulta (jal_ver).');
+      return;
+    }
     setXmlModalUrl(url);
     setXmlModalError(initialError);
     setIsXmlModalOpen(true);
@@ -539,13 +727,21 @@ export default function App() {
               onManualSync={handleManualSync}
               onForceUpload={handleForceUpload}
               onForceDownload={handleForceDownload}
+              accessCode={accessCode}
+              accessRole={accessRole}
+              onOpenAccessCodeModal={() => setIsAccessModalOpen(true)}
             />
 
             <button
               id="header-xml-paste-btn"
               onClick={() => handleOpenXmlModal()}
-              className="py-2 px-3 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 text-xs font-bold hover:bg-amber-100 transition-colors flex items-center gap-1.5"
-              title="Colar XML manualmente"
+              disabled={isReadOnly}
+              className={`py-2 px-3 rounded-xl border text-xs font-bold transition-colors flex items-center gap-1.5 ${
+                isReadOnly
+                  ? 'border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed opacity-50'
+                  : 'border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 hover:bg-amber-100'
+              }`}
+              title={isReadOnly ? "Desativado em Modo Consulta (jal_ver)" : "Colar XML manualmente"}
             >
               <FileCode className="w-4 h-4 text-amber-600 dark:text-amber-400" />
               <span className="hidden md:inline">Colar XML</span>
@@ -563,40 +759,27 @@ export default function App() {
         </div>
       </header>
 
-      {/* Cloud Sync Announcement Banner for Non-Logged Users */}
-      {!user && !cloudBannerDismissed && (
-        <div className="bg-gradient-to-r from-indigo-900 via-indigo-800 to-emerald-900 text-white px-4 py-2.5 shadow-md">
-          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
-            <div className="flex items-center gap-2">
-              <Cloud className="w-4 h-4 text-emerald-300 shrink-0" />
-              <span>
-                <strong>Sincronização em Tempo Real Ativada:</strong> Conecte sua conta Google no PC e no Celular para sincronizar seus {items.length} itens instantaneamente sem arquivos!
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleLogin}
-                className="py-1 px-3 bg-white text-indigo-950 font-bold rounded-lg hover:bg-indigo-50 transition-colors shadow-xs"
-              >
-                Conectar com Google
-              </button>
-              <button
-                onClick={() => setCloudBannerDismissed(true)}
-                className="text-indigo-200 hover:text-white px-1.5 py-0.5 text-xs"
-              >
-                ✕
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 pb-36 sm:pb-12">
         <React.Suspense fallback={<TabLoadingFallback />}>
           {/* Screen 1: Leitor de QR */}
           {activeTab === 'scanner' && (
             <div className="space-y-6">
+              {/* Notice when in Read-Only mode */}
+              {isReadOnly && (
+                <div className="p-4 rounded-2xl bg-sky-50 dark:bg-sky-950/50 border border-sky-200 dark:border-sky-800 text-sky-900 dark:text-sky-200 text-xs flex items-center gap-3 shadow-xs">
+                  <Eye className="w-5 h-5 text-sky-600 dark:text-sky-400 shrink-0" />
+                  <div className="space-y-0.5">
+                    <p className="font-bold text-slate-900 dark:text-white">
+                      Modo Consulta Ativo
+                    </p>
+                    <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
+                      Você tem acesso completo para visualizar relatórios, gráficos, matrizes de compras e exportar planilhas. O salvamento e alteração de novos dados estão desativados neste aparelho.
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {/* Show Pending Scanned Receipt Card if available */}
               {pendingReceipt ? (
                 <div className="space-y-4">
@@ -605,6 +788,7 @@ export default function App() {
                     onSaveToHistory={handleSavePendingReceipt}
                     onDiscard={handleDiscardPendingReceipt}
                     onGoToReport={() => setActiveTab('report')}
+                    isReadOnly={isReadOnly}
                   />
                 </div>
               ) : null}
@@ -644,6 +828,7 @@ export default function App() {
               onSwitchToScanner={() => setActiveTab('scanner')}
               onSwitchToActions={() => setActiveTab('actions')}
               onRestoreBackup={handleRestoreBackup}
+              isReadOnly={isReadOnly}
             />
           )}
 
@@ -658,6 +843,7 @@ export default function App() {
               onDeleteMultipleReceipts={handleDeleteMultipleReceipts}
               onViewItemsInReport={() => setActiveTab('report')}
               onSwitchToScanner={() => setActiveTab('scanner')}
+              isReadOnly={isReadOnly}
             />
           )}
 
@@ -668,6 +854,7 @@ export default function App() {
               receipts={reconciledReceipts}
               onRestoreBackup={handleRestoreBackup}
               onGoToReport={() => setActiveTab('report')}
+              isReadOnly={isReadOnly}
             />
           )}
         </React.Suspense>
@@ -792,6 +979,58 @@ export default function App() {
             onSave={handleSaveManualItem}
           />
         )}
+
+        {/* Access Code Modal (Option A: jal_completo / jal_ver) */}
+        <AccessCodeModal
+          isOpen={isAccessModalOpen}
+          onClose={() => setIsAccessModalOpen(false)}
+          currentCode={accessCode}
+          currentRole={accessRole}
+          onCodeApplied={(code, role) => {
+            setAccessCode(code);
+            setAccessRole(role);
+            setIsAccessModalOpen(false);
+
+            // Fetch and sync data immediately
+            setIsSyncing(true);
+            loadSharedSpace()
+              .then((data) => {
+                const localItems = getStoredItems();
+                const localReceipts = getStoredReceipts();
+
+                if (data && (data.items.length > 0 || data.receipts.length > 0)) {
+                  const mergedReceipts = role === 'admin'
+                    ? mergeReceiptsWithCloud(localReceipts, data.receipts)
+                    : (data.receipts.length > 0 ? data.receipts : localReceipts);
+                  const mergedItems = role === 'admin'
+                    ? mergeItemsWithCloud(localItems, data.items)
+                    : (data.items.length > 0 ? data.items : localItems);
+
+                  setItems(mergedItems);
+                  setReceipts(mergedReceipts);
+                  saveStoredItems(mergedItems);
+                  saveStoredReceipts(mergedReceipts);
+
+                  if (role === 'admin') {
+                    syncSharedSpace(mergedItems, mergedReceipts);
+                  }
+                } else if (role === 'admin' && (localItems.length > 0 || localReceipts.length > 0)) {
+                  syncSharedSpace(localItems, localReceipts);
+                }
+                setIsSyncing(false);
+                setLastSyncedAt(new Date());
+              })
+              .catch((err) => {
+                console.warn('Erro ao carregar dados do espaço compartilhado:', err);
+                setIsSyncing(false);
+              });
+          }}
+          onCodeCleared={() => {
+            setAccessCode('');
+            setAccessRole(null);
+            setIsAccessModalOpen(false);
+          }}
+        />
       </React.Suspense>
     </div>
   );

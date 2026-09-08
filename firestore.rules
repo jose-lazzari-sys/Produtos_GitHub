@@ -12,5 +12,14 @@ service cloud.firestore {
         allow read, write: if isOwner(userId);
       }
     }
+
+    // Shared spaces for multi-device synchronization via access codes
+    match /spaces/{spaceId} {
+      allow read, write: if true;
+
+      match /{allSubcollections=**} {
+        allow read, write: if true;
+      }
+    }
   }
 }

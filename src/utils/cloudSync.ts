@@ -29,6 +29,59 @@ export interface CloudSyncState {
   isQuotaExceeded: boolean;
 }
 
+// Access Code & Role Management
+export type AccessRole = 'admin' | 'readonly';
+
+export interface AccessCodeConfig {
+  code: string;
+  role: AccessRole;
+  label: string;
+}
+
+export const ADMIN_CODE = 'jal_completo';
+export const CONSULTA_CODE = 'jal_ver';
+export const SHARED_SPACE_ID = 'jal_compras';
+
+export function validateAccessCode(rawCode?: string | null): AccessCodeConfig | null {
+  if (!rawCode) return null;
+  const clean = rawCode.trim().toLowerCase();
+  if (clean === ADMIN_CODE) {
+    return {
+      code: ADMIN_CODE,
+      role: 'admin',
+      label: 'Administrador (Acesso Total)'
+    };
+  }
+  if (clean === CONSULTA_CODE) {
+    return {
+      code: CONSULTA_CODE,
+      role: 'readonly',
+      label: 'Consulta (Somente Leitura)'
+    };
+  }
+  return null;
+}
+
+export function getSavedAccessCode(): string {
+  try {
+    return localStorage.getItem('app_access_code') || '';
+  } catch {
+    return '';
+  }
+}
+
+export function saveAccessCode(code: string): void {
+  try {
+    localStorage.setItem('app_access_code', code.trim().toLowerCase());
+  } catch {}
+}
+
+export function clearAccessCode(): void {
+  try {
+    localStorage.removeItem('app_access_code');
+  } catch {}
+}
+
 // 200 items per chunk (~80-100KB per doc) ensures each document is well under Firestore's 1MB limit
 const ITEMS_PER_CHUNK = 200;
 
@@ -223,10 +276,11 @@ function sanitizeForFirestore<T>(data: T): T {
  * Overwrites the root document's items array to [] so the root doc remains tiny (~20KB).
  */
 export async function syncDataToCloud(
-  userId: string, 
+  targetId: string, 
   items: NFCeItem[], 
   receipts: NFCeReceipt[],
-  userEmail?: string | null
+  userEmail?: string | null,
+  isSharedSpace = false
 ): Promise<boolean> {
   if (isQuotaExceededFlag) {
     // Graceful skip when daily free quota is already known to be exhausted
@@ -250,12 +304,13 @@ export async function syncDataToCloud(
 
     const batch = writeBatch(db);
     const nowIso = new Date().toISOString();
+    const collectionName = isSharedSpace ? 'spaces' : 'users';
 
-    // 1. Write chunk documents to subcollection /users/{userId}/itemChunks/chunk_{i}
+    // 1. Write chunk documents to subcollection /{collectionName}/{targetId}/itemChunks/chunk_{i}
     for (let i = 0; i < chunks.length; i++) {
-      const chunkRef = doc(db, 'users', userId, 'itemChunks', `chunk_${i}`);
+      const chunkRef = doc(db, collectionName, targetId, 'itemChunks', `chunk_${i}`);
       batch.set(chunkRef, {
-        userId,
+        userId: targetId,
         chunkIndex: i,
         totalChunks: chunks.length,
         items: chunks[i],
@@ -267,22 +322,21 @@ export async function syncDataToCloud(
     // 2. Delete any higher-indexed chunks from previous syncs if items were deleted
     if (lastKnownChunkCount > chunks.length) {
       for (let i = chunks.length; i < lastKnownChunkCount; i++) {
-        const staleChunkRef = doc(db, 'users', userId, 'itemChunks', `chunk_${i}`);
+        const staleChunkRef = doc(db, collectionName, targetId, 'itemChunks', `chunk_${i}`);
         batch.delete(staleChunkRef);
       }
     }
 
-    // 3. Update root user doc with summary metadata and receipts
-    // Setting items to [] replaces and eliminates the old 1.2MB array from the root document!
-    const userDocRef = doc(db, 'users', userId);
-    batch.set(userDocRef, {
+    // 3. Update root doc with summary metadata and receipts
+    const rootDocRef = doc(db, collectionName, targetId);
+    batch.set(rootDocRef, {
       items: [],
       itemsCount: items.length,
       receiptsCount: receipts.length,
       receipts: cleanReceipts,
       chunkCount: chunks.length,
       updatedAt: nowIso,
-      userEmail: userEmail || ''
+      userEmail: userEmail || (isSharedSpace ? 'jal_completo' : '')
     }, { merge: true });
 
     await batch.commit();
@@ -310,11 +364,12 @@ export async function syncDataToCloud(
  * Debounced sync to avoid quota exhaustion on rapid edits/imports
  */
 export function debouncedSyncToCloud(
-  userId: string,
+  targetId: string,
   items: NFCeItem[],
   receipts: NFCeReceipt[],
   userEmail?: string | null,
-  delayMs = 2500
+  delayMs = 2500,
+  isSharedSpace = false
 ): void {
   if (isQuotaExceededFlag) return;
 
@@ -323,19 +378,23 @@ export function debouncedSyncToCloud(
   }
 
   syncDebounceTimer = setTimeout(() => {
-    syncDataToCloud(userId, items, receipts, userEmail).catch(() => {});
+    syncDataToCloud(targetId, items, receipts, userEmail, isSharedSpace).catch(() => {});
   }, delayMs);
 }
 
 /**
- * Loads data from Firestore once for the user, reading from chunk documents when available.
+ * Loads data from Firestore once, reading from chunk documents when available.
  */
-export async function loadDataFromCloud(userId: string): Promise<{ items: NFCeItem[]; receipts: NFCeReceipt[] } | null> {
+export async function loadDataFromCloud(
+  targetId: string,
+  isSharedSpace = false
+): Promise<{ items: NFCeItem[]; receipts: NFCeReceipt[] } | null> {
   if (isQuotaExceededFlag) return null;
 
   try {
-    const userDocRef = doc(db, 'users', userId);
-    const snap = await getDoc(userDocRef);
+    const collectionName = isSharedSpace ? 'spaces' : 'users';
+    const targetDocRef = doc(db, collectionName, targetId);
+    const snap = await getDoc(targetDocRef);
     if (!snap.exists()) {
       return null;
     }
@@ -357,7 +416,7 @@ export async function loadDataFromCloud(userId: string): Promise<{ items: NFCeIt
       // Concurrently fetch all chunk documents
       const chunkPromises = [];
       for (let i = 0; i < chunkCount; i++) {
-        chunkPromises.push(getDoc(doc(db, 'users', userId, 'itemChunks', `chunk_${i}`)));
+        chunkPromises.push(getDoc(doc(db, collectionName, targetId, 'itemChunks', `chunk_${i}`)));
       }
       const chunkSnaps = await Promise.all(chunkPromises);
       for (const cSnap of chunkSnaps) {
@@ -386,12 +445,14 @@ export async function loadDataFromCloud(userId: string): Promise<{ items: NFCeIt
 }
 
 /**
- * Starts real-time listener for user's shopping data in Firestore with chunk support and graceful quota handling.
+ * Starts real-time listener for shopping data in Firestore with chunk support and graceful quota handling.
  */
 export function subscribeToCloudData(
-  userId: string,
+  targetId: string,
   onData: (items: NFCeItem[], receipts: NFCeReceipt[]) => void,
-  onError?: (err: any) => void
+  onError?: (err: any) => void,
+  isSharedSpace = false,
+  isReadOnly = false
 ): () => void {
   if (syncListenerUnsubscribe) {
     syncListenerUnsubscribe();
@@ -402,10 +463,11 @@ export function subscribeToCloudData(
     return () => {};
   }
 
-  const userDocRef = doc(db, 'users', userId);
+  const collectionName = isSharedSpace ? 'spaces' : 'users';
+  const targetDocRef = doc(db, collectionName, targetId);
   
   syncListenerUnsubscribe = onSnapshot(
-    userDocRef,
+    targetDocRef,
     async (docSnap) => {
       const localItems = getStoredItems();
       const localReceipts = getStoredReceipts();
@@ -427,7 +489,7 @@ export function subscribeToCloudData(
         if (chunkCount > 0) {
           const chunkPromises = [];
           for (let i = 0; i < chunkCount; i++) {
-            chunkPromises.push(getDoc(doc(db, 'users', userId, 'itemChunks', `chunk_${i}`)));
+            chunkPromises.push(getDoc(doc(db, collectionName, targetId, 'itemChunks', `chunk_${i}`)));
           }
           try {
             const chunkSnaps = await Promise.all(chunkPromises);
@@ -452,21 +514,23 @@ export function subscribeToCloudData(
           return;
         }
 
-        // If cloud is empty but local has items, don't overwrite local data with empty cloud!
+        // If cloud is empty but local has items and we are NOT in readonly mode:
         if (cloudItems.length === 0 && localItems.length > 0) {
-          if (!isQuotaExceededFlag) {
-            debouncedSyncToCloud(userId, localItems, localReceipts, auth.currentUser?.email);
+          if (!isQuotaExceededFlag && !isReadOnly) {
+            debouncedSyncToCloud(targetId, localItems, localReceipts, auth.currentUser?.email || (isSharedSpace ? 'jal_completo' : null), 2500, isSharedSpace);
           }
           onData(localItems, localReceipts);
           return;
         }
 
-        // If local is empty but cloud has items, use cloud items
-        if (localItems.length === 0 && cloudItems.length > 0) {
-          saveStoredItems(cloudItems);
-          saveStoredReceipts(cloudReceipts);
-          lastSyncedDataHash = cloudHash;
-          onData(getStoredItems(), getStoredReceipts());
+        // If local is empty or we are in readonly mode, accept cloud items unconditionally
+        if (localItems.length === 0 || isReadOnly) {
+          if (cloudItems.length > 0 || cloudReceipts.length > 0) {
+            saveStoredItems(cloudItems);
+            saveStoredReceipts(cloudReceipts);
+            lastSyncedDataHash = cloudHash;
+            onData(getStoredItems(), getStoredReceipts());
+          }
           return;
         }
 
@@ -485,9 +549,15 @@ export function subscribeToCloudData(
             const match = mergedReceipts.find(mr => mr.id === cr.id || (mr.data === cr.data && mr.razaoSocial === cr.razaoSocial));
             return !match || (match.conferido === cr.conferido);
           });
-          if (!cloudHasAllConferidos && !isQuotaExceededFlag) {
-            debouncedSyncToCloud(userId, mergedItems, mergedReceipts, auth.currentUser?.email);
+          if (!cloudHasAllConferidos && !isQuotaExceededFlag && !isReadOnly) {
+            debouncedSyncToCloud(targetId, mergedItems, mergedReceipts, auth.currentUser?.email || (isSharedSpace ? 'jal_completo' : null), 2500, isSharedSpace);
           }
+        }
+      } else {
+        // Document does not exist in Firestore yet.
+        // If current device has local items and is an admin (not readonly), upload to initialize the shared space!
+        if (localItems.length > 0 && !isReadOnly && !isQuotaExceededFlag) {
+          syncDataToCloud(targetId, localItems, localReceipts, auth.currentUser?.email || (isSharedSpace ? 'jal_completo' : null), isSharedSpace);
         }
       }
     },
@@ -512,5 +582,33 @@ export function subscribeToCloudData(
       syncListenerUnsubscribe = null;
     }
   };
+}
+
+// Dedicated helpers for shared space
+export async function syncSharedSpace(
+  items: NFCeItem[],
+  receipts: NFCeReceipt[]
+): Promise<boolean> {
+  return syncDataToCloud(SHARED_SPACE_ID, items, receipts, 'jal_completo', true);
+}
+
+export function debouncedSyncSharedSpace(
+  items: NFCeItem[],
+  receipts: NFCeReceipt[],
+  delayMs = 2500
+): void {
+  debouncedSyncToCloud(SHARED_SPACE_ID, items, receipts, 'jal_completo', delayMs, true);
+}
+
+export async function loadSharedSpace(): Promise<{ items: NFCeItem[]; receipts: NFCeReceipt[] } | null> {
+  return loadDataFromCloud(SHARED_SPACE_ID, true);
+}
+
+export function subscribeToSharedSpace(
+  onData: (items: NFCeItem[], receipts: NFCeReceipt[]) => void,
+  onError?: (err: any) => void,
+  isReadOnly = false
+): () => void {
+  return subscribeToCloudData(SHARED_SPACE_ID, onData, onError, true, isReadOnly);
 }
 

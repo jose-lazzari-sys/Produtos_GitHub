@@ -39,6 +39,7 @@ interface NfAppTabProps {
   onDeleteMultipleReceipts?: (receiptIds: string[]) => void;
   onViewItemsInReport?: (receiptId: string) => void;
   onSwitchToScanner?: () => void;
+  isReadOnly?: boolean;
 }
 
 export function NfAppTab({
@@ -49,7 +50,8 @@ export function NfAppTab({
   onDeleteReceipt,
   onDeleteMultipleReceipts,
   onViewItemsInReport,
-  onSwitchToScanner
+  onSwitchToScanner,
+  isReadOnly = false
 }: NfAppTabProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedYearMonth, setSelectedYearMonth] = useState<string | null>(null);
@@ -635,7 +637,7 @@ export function NfAppTab({
       </div>
 
       {/* Selection Action Bar (Shown when 1 or more receipts are selected) */}
-      {selectedCount > 0 && (
+      {!isReadOnly && selectedCount > 0 && (
         <div className="p-3.5 sm:p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-in fade-in duration-200">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-rose-600 text-white flex items-center justify-center font-black text-sm shadow-xs shrink-0">
@@ -687,7 +689,7 @@ export function NfAppTab({
                 ? 'Você ainda não possui notas fiscais cadastradas. Escaneie um QR Code de NFC-e para registrar sua primeira nota!'
                 : 'Nenhum resultado corresponde aos filtros selecionados.'}
             </p>
-            {receipts.length === 0 && onSwitchToScanner && (
+            {receipts.length === 0 && onSwitchToScanner && !isReadOnly && (
               <button
                 onClick={onSwitchToScanner}
                 className="mt-2 py-2 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-xs inline-flex items-center gap-2"
@@ -705,23 +707,25 @@ export function NfAppTab({
                 <thead>
                   <tr className="bg-slate-50 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-800 text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider select-none">
                     {/* CHECKBOX SELEÇÃO */}
-                    <th className="py-3.5 px-3 text-center w-12 select-none">
-                      <button
-                        type="button"
-                        id="select-all-visible-checkbox"
-                        onClick={toggleSelectAllVisible}
-                        title={isAllFilteredSelected ? "Desmarcar todas as notas exibidas" : "Selecionar todas as notas exibidas"}
-                        className="inline-flex items-center justify-center p-1 rounded-md text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white transition-colors cursor-pointer"
-                      >
-                        {isAllFilteredSelected ? (
-                          <CheckSquare className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                        ) : isSomeFilteredSelected ? (
-                          <MinusSquare className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                        ) : (
-                          <Square className="w-4 h-4 text-slate-400 dark:text-slate-500" />
-                        )}
-                      </button>
-                    </th>
+                    {!isReadOnly && (
+                      <th className="py-3.5 px-3 text-center w-12 select-none">
+                        <button
+                          type="button"
+                          id="select-all-visible-checkbox"
+                          onClick={toggleSelectAllVisible}
+                          title={isAllFilteredSelected ? "Desmarcar todas as notas exibidas" : "Selecionar todas as notas exibidas"}
+                          className="inline-flex items-center justify-center p-1 rounded-md text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white transition-colors cursor-pointer"
+                        >
+                          {isAllFilteredSelected ? (
+                            <CheckSquare className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                          ) : isSomeFilteredSelected ? (
+                            <MinusSquare className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                          ) : (
+                            <Square className="w-4 h-4 text-slate-400 dark:text-slate-500" />
+                          )}
+                        </button>
+                      </th>
+                    )}
 
                     {/* DATA */}
                     <th 
@@ -804,24 +808,26 @@ export function NfAppTab({
                         }`}
                       >
                         {/* CHECKBOX */}
-                        <td className="py-3.5 px-3 text-center">
-                          <button
-                            type="button"
-                            id={`select-receipt-btn-${rcpt.id}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleSelectReceipt(rcpt.id);
-                            }}
-                            title={isSelected ? "Desmarcar nota fiscal" : "Selecionar nota fiscal para exclusão"}
-                            className="inline-flex items-center justify-center p-1 rounded-md transition-colors cursor-pointer"
-                          >
-                            {isSelected ? (
-                              <CheckSquare className="w-4 h-4 text-rose-600 dark:text-rose-400" />
-                            ) : (
-                              <Square className="w-4 h-4 text-slate-300 dark:text-slate-600 hover:text-slate-500" />
-                            )}
-                          </button>
-                        </td>
+                        {!isReadOnly && (
+                          <td className="py-3.5 px-3 text-center">
+                            <button
+                              type="button"
+                              id={`select-receipt-btn-${rcpt.id}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleSelectReceipt(rcpt.id);
+                              }}
+                              title={isSelected ? "Desmarcar nota fiscal" : "Selecionar nota fiscal para exclusão"}
+                              className="inline-flex items-center justify-center p-1 rounded-md transition-colors cursor-pointer"
+                            >
+                              {isSelected ? (
+                                <CheckSquare className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+                              ) : (
+                                <Square className="w-4 h-4 text-slate-300 dark:text-slate-600 hover:text-slate-500" />
+                              )}
+                            </button>
+                          </td>
+                        )}
 
                         {/* 1. DATA */}
                         <td className="py-3.5 px-4 whitespace-nowrap font-semibold text-slate-900 dark:text-white">
@@ -860,36 +866,47 @@ export function NfAppTab({
 
                         {/* 5. CONFERIDO (Preenchimento manual com "Sim" ou "-") */}
                         <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                          <div className="inline-flex items-center bg-slate-100 dark:bg-slate-800 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700">
-                            {/* Opção Sim */}
-                            <button
-                              id={`conferido-sim-btn-${rcpt.id}`}
-                              onClick={() => onUpdateReceiptConferido(rcpt.id, 'Sim')}
-                              title="Marcar como Conferido (Sim)"
-                              className={`py-1 px-3 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
-                                isConferido
-                                  ? 'bg-emerald-600 text-white shadow-xs'
-                                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                              }`}
-                            >
-                              <CheckCircle2 className="w-3 h-3" />
-                              <span>Sim</span>
-                            </button>
+                          {isReadOnly ? (
+                            <span className={`inline-flex items-center gap-1 py-1 px-3 rounded-xl text-xs font-bold ${
+                              isConferido
+                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800'
+                                : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400 border border-slate-200 dark:border-slate-700'
+                            }`}>
+                              {isConferido && <CheckCircle2 className="w-3 h-3" />}
+                              <span>{isConferido ? 'Sim' : '-'}</span>
+                            </span>
+                          ) : (
+                            <div className="inline-flex items-center bg-slate-100 dark:bg-slate-800 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700">
+                              {/* Opção Sim */}
+                              <button
+                                id={`conferido-sim-btn-${rcpt.id}`}
+                                onClick={() => onUpdateReceiptConferido(rcpt.id, 'Sim')}
+                                title="Marcar como Conferido (Sim)"
+                                className={`py-1 px-3 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
+                                  isConferido
+                                    ? 'bg-emerald-600 text-white shadow-xs'
+                                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                }`}
+                              >
+                                <CheckCircle2 className="w-3 h-3" />
+                                <span>Sim</span>
+                              </button>
 
-                            {/* Opção - */}
-                            <button
-                              id={`conferido-pendente-btn-${rcpt.id}`}
-                              onClick={() => onUpdateReceiptConferido(rcpt.id, '-')}
-                              title="Marcar como Não Conferido (-)"
-                              className={`py-1 px-3 rounded-lg text-xs font-bold transition-all ${
-                                !isConferido
-                                  ? 'bg-slate-600 text-white shadow-xs'
-                                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                              }`}
-                            >
-                              <span>-</span>
-                            </button>
-                          </div>
+                              {/* Opção - */}
+                              <button
+                                id={`conferido-pendente-btn-${rcpt.id}`}
+                                onClick={() => onUpdateReceiptConferido(rcpt.id, '-')}
+                                title="Marcar como Não Conferido (-)"
+                                className={`py-1 px-3 rounded-lg text-xs font-bold transition-all ${
+                                  !isConferido
+                                    ? 'bg-slate-600 text-white shadow-xs'
+                                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                }`}
+                              >
+                                <span>-</span>
+                              </button>
+                            </div>
+                          )}
                         </td>
 
                         {/* Ações (Expandir detalhes, Ver itens, Excluir) */}
@@ -904,7 +921,7 @@ export function NfAppTab({
                               {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                             </button>
 
-                            {onDeleteReceipt && (
+                            {!isReadOnly && onDeleteReceipt && (
                               <button
                                 id={`delete-receipt-btn-${rcpt.id}`}
                                 onClick={() => setDeleteConfirmId(rcpt.id)}

@@ -33,6 +33,7 @@ export interface ReportItemsViewProps {
   onSwitchToScanner: () => void;
   onLoadSample: () => void;
   onClearFilters: () => void;
+  isReadOnly?: boolean;
 }
 
 export const ReportItemsView: React.FC<ReportItemsViewProps> = ({
@@ -47,6 +48,7 @@ export const ReportItemsView: React.FC<ReportItemsViewProps> = ({
   onSwitchToScanner,
   onLoadSample,
   onClearFilters,
+  isReadOnly = false,
 }) => {
   // Sorting state
   const [sortField, setSortField] = useState<'num' | 'valorTotal' | 'data' | 'descricao' | 'precoPorKg'>('data');
@@ -229,7 +231,7 @@ export const ReportItemsView: React.FC<ReportItemsViewProps> = ({
       {/* Top Action Toolbar */}
       <div className="p-4 bg-slate-50 dark:bg-slate-850 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          {onAddManualItem && (
+          {!isReadOnly && onAddManualItem && (
             <button
               type="button"
               onClick={onAddManualItem}
@@ -240,7 +242,7 @@ export const ReportItemsView: React.FC<ReportItemsViewProps> = ({
             </button>
           )}
 
-          {onUpdateAllStoreNames && (
+          {!isReadOnly && onUpdateAllStoreNames && (
             <button
               type="button"
               onClick={() => setIsStoreModalOpen(true)}
@@ -260,10 +262,17 @@ export const ReportItemsView: React.FC<ReportItemsViewProps> = ({
             <Copy className="w-3.5 h-3.5" />
             <span>{copiedSuccess ? 'Copiado!' : 'Copiar p/ Planilha'}</span>
           </button>
+
+          {isReadOnly && (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800 text-sky-800 dark:text-sky-300 text-xs font-semibold">
+              <AlertCircle className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
+              <span>Modo Consulta (jal_ver): Proteção contra alterações ativada</span>
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
-          {items.length > 0 && (
+          {!isReadOnly && items.length > 0 && (
             <button
               type="button"
               onClick={() => {
@@ -387,7 +396,7 @@ export const ReportItemsView: React.FC<ReportItemsViewProps> = ({
 
               {/* Sticky Actions */}
               <th className="p-3 sm:p-3.5 w-24 min-w-[96px] text-center sticky right-0 z-20 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-l border-slate-200 dark:border-slate-700 shadow-[-6px_0_10px_-4px_rgba(0,0,0,0.12)]">
-                Ações
+                {isReadOnly ? 'Status' : 'Ações'}
               </th>
             </tr>
           </thead>
@@ -466,30 +475,36 @@ export const ReportItemsView: React.FC<ReportItemsViewProps> = ({
 
                   {/* Sticky Actions */}
                   <td className="p-2 sm:p-3 text-center whitespace-nowrap sticky right-0 z-10 bg-white dark:bg-slate-900 group-hover:bg-slate-50 dark:group-hover:bg-slate-800/90 border-l border-slate-100 dark:border-slate-800 shadow-[-6px_0_10px_-4px_rgba(0,0,0,0.08)]">
-                    <div className="flex items-center justify-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onEditClick(item);
-                        }}
-                        className="p-1.5 rounded-lg text-slate-600 dark:text-slate-300 hover:text-sky-600 dark:hover:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-950/60 border border-slate-200 dark:border-slate-700 hover:border-sky-300 transition-all flex items-center justify-center shadow-2xs cursor-pointer"
-                        title="Editar item"
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setItemToDelete(item);
-                        }}
-                        className="p-1.5 rounded-lg text-slate-600 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/60 border border-slate-200 dark:border-slate-700 hover:border-red-300 transition-all flex items-center justify-center shadow-2xs cursor-pointer"
-                        title="Excluir item"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+                    {isReadOnly ? (
+                      <span className="inline-block px-2 py-1 rounded-md text-[11px] font-semibold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800">
+                        Consulta
+                      </span>
+                    ) : (
+                      <div className="flex items-center justify-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onEditClick(item);
+                          }}
+                          className="p-1.5 rounded-lg text-slate-600 dark:text-slate-300 hover:text-sky-600 dark:hover:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-950/60 border border-slate-200 dark:border-slate-700 hover:border-sky-300 transition-all flex items-center justify-center shadow-2xs cursor-pointer"
+                          title="Editar item"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setItemToDelete(item);
+                          }}
+                          className="p-1.5 rounded-lg text-slate-600 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/60 border border-slate-200 dark:border-slate-700 hover:border-red-300 transition-all flex items-center justify-center shadow-2xs cursor-pointer"
+                          title="Excluir item"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))

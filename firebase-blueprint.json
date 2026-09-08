@@ -64,6 +64,21 @@
         "updatedAt": { "type": "string" }
       },
       "required": ["userId", "chunkIndex", "items", "updatedAt"]
+    },
+    "Space": {
+      "title": "Space",
+      "description": "Shared workspace containing shopping items and receipts accessible via access code",
+      "type": "object",
+      "properties": {
+        "items": { "type": "array" },
+        "itemsCount": { "type": "number" },
+        "receipts": { "type": "array" },
+        "receiptsCount": { "type": "number" },
+        "chunkCount": { "type": "number" },
+        "updatedAt": { "type": "string" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["updatedAt"]
     }
   },
   "firestore": {
@@ -82,6 +97,14 @@
     "/users/{userId}/itemChunks/{chunkId}": {
       "schema": "ItemChunk",
       "description": "Batched item chunks for high volume datasets within 1MB limit"
+    },
+    "/spaces/{spaceId}": {
+      "schema": "Space",
+      "description": "Shared shopping space accessible via access codes"
+    },
+    "/spaces/{spaceId}/itemChunks/{chunkId}": {
+      "schema": "ItemChunk",
+      "description": "Batched item chunks for shared space"
     }
   }
 }

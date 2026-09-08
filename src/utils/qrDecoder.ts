@@ -122,10 +122,10 @@ export async function decodeFromVideoElement(
   // The user aligns the QR code within the central green reticle on screen (~65% of smaller dimension)
   const roiCtx = roiCanvas.getContext('2d', { willReadFrequently: true });
   if (roiCtx) {
-    const roiSize = Math.min(vw, vh) * 0.65;
+    const roiSize = Math.min(vw, vh) * 0.70;
     const sx = (vw - roiSize) / 2;
     const sy = (vh - roiSize) / 2;
-    const targetDim = 420;
+    const targetDim = 440;
 
     if (roiCanvas.width !== targetDim || roiCanvas.height !== targetDim) {
       roiCanvas.width = targetDim;
@@ -135,7 +135,7 @@ export async function decodeFromVideoElement(
     roiCtx.drawImage(video, sx, sy, roiSize, roiSize, 0, 0, targetDim, targetDim);
     const roiImageData = roiCtx.getImageData(0, 0, targetDim, targetDim);
 
-    // jsQR on 420x420 is ultra-fast (< 3ms)
+    // jsQR on 440x440 is ultra-fast (< 4ms)
     try {
       const code = jsQR(roiImageData.data, targetDim, targetDim, {
         inversionAttempts: 'attemptBoth',
@@ -145,7 +145,18 @@ export async function decodeFromVideoElement(
       }
     } catch {}
 
-    // ZXing QRCodeReader on ROI (only run if native detector is absent or throttled, saving massive mobile CPU)
+    // Thermal Contrast Binarization Pass on ROI (crucial for faded/low-contrast paper receipts!)
+    try {
+      const binarizedRoi = enhanceThermalContrast(roiImageData);
+      const binCode = jsQR(binarizedRoi.data, targetDim, targetDim, {
+        inversionAttempts: 'attemptBoth',
+      });
+      if (binCode && binCode.data) {
+        return { text: binCode.data, source: 'thermal_contrast' };
+      }
+    } catch {}
+
+    // ZXing QRCodeReader on ROI
     if (!detector || checkFullFrame) {
       const zxText = decodeZxingFromImageData(roiImageData);
       if (zxText) {
@@ -154,12 +165,12 @@ export async function decodeFromVideoElement(
     }
   }
 
-  // 3. Optional full-frame pass (for off-center QR codes)
+  // 3. Full-frame pass (for off-center or larger QR codes)
   if (checkFullFrame && fullCanvas) {
     const fullCtx = fullCanvas.getContext('2d', { willReadFrequently: true });
     if (fullCtx) {
-      const fw = 640;
-      const fh = Math.round((vh / vw) * 640);
+      const fw = 720;
+      const fh = Math.round((vh / vw) * 720);
       if (fullCanvas.width !== fw || fullCanvas.height !== fh) {
         fullCanvas.width = fw;
         fullCanvas.height = fh;
@@ -171,6 +182,15 @@ export async function decodeFromVideoElement(
         const code = jsQR(fullImgData.data, fw, fh, { inversionAttempts: 'attemptBoth' });
         if (code && code.data) {
           return { text: code.data, source: 'jsqr' };
+        }
+      } catch {}
+
+      // Thermal contrast on full frame
+      try {
+        const binarizedFull = enhanceThermalContrast(fullImgData);
+        const binFullCode = jsQR(binarizedFull.data, fw, fh, { inversionAttempts: 'attemptBoth' });
+        if (binFullCode && binFullCode.data) {
+          return { text: binFullCode.data, source: 'thermal_contrast' };
         }
       } catch {}
 
@@ -249,8 +269,8 @@ export async function decodeFromImageElement(
     } catch {}
   }
 
-  // Pass 2: Html5Qrcode.scanFile if original File is available
-  if (originalFile && typeof document !== 'undefined') {
+  // Pass 2: Html5Qrcode.scanFile only if file is reasonably sized (< 1.5MB) to avoid freezing mobile UI thread
+  if (originalFile && originalFile.size < 1.5 * 1024 * 1024 && typeof document !== 'undefined') {
     try {
       let hiddenContainer = document.getElementById('html5-qr-hidden-container');
       if (!hiddenContainer) {

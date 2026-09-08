@@ -222,21 +222,26 @@ app.post('/api/parse-nfce', async (req, res) => {
 
     const urlsToTry: string[] = [];
 
+    // Priority 1: If an authentic QR Code URL was scanned (containing the official token & signature), try it FIRST!
+    if (targetUrl && (targetUrl.startsWith('http://') || targetUrl.startsWith('https://'))) {
+      urlsToTry.push(targetUrl);
+    }
+
     if (extracted44) {
       // Prioritize Sefaz SP direct consultation format (|3|1) which provides full HTML item list
-      urlsToTry.push(
+      const sefazUrls = [
         `https://www.nfce.fazenda.sp.gov.br/NFCeConsultaPublica/Paginas/ConsultaQRCode.aspx?p=${extracted44}|3|1`,
         `https://www.nfce.fazenda.sp.gov.br/NFCeConsultaPublica/Paginas/ConsultaQRCode.aspx?p=${extracted44}|3|1|1`,
         `https://www.nfce.fazenda.sp.gov.br/NFCeConsultaPublica/Paginas/ConsultaQRCode.aspx?p=${extracted44}|2|1`,
         `https://www.nfce.fazenda.sp.gov.br/NFCeConsultaPublica/Paginas/ConsultaQRCode.aspx?p=${extracted44}|2|1|1|`,
         `https://www.nfce.fazenda.sp.gov.br/NFCeConsultaPublica/Paginas/ConsultaQRCode.aspx?p=${extracted44}|1|1`,
         `https://www.nfce.fazenda.sp.gov.br/qrcode?p=${extracted44}|3|1`
-      );
-    }
+      ];
 
-    if (targetUrl && (targetUrl.startsWith('http://') || targetUrl.startsWith('https://'))) {
-      if (!urlsToTry.includes(targetUrl)) {
-        urlsToTry.push(targetUrl);
+      for (const u of sefazUrls) {
+        if (!urlsToTry.includes(u)) {
+          urlsToTry.push(u);
+        }
       }
     }
 

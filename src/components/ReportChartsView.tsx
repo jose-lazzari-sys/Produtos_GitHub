@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { TrendingUp, PieChart, BarChart3 } from 'lucide-react';
+import { BarChart3 } from 'lucide-react';
 import { formatBRL } from '../utils/nfceParser';
 import { NFCeItem } from '../types';
 import { MatrixGroup } from './ReportMatrixView';
@@ -78,48 +78,6 @@ export const ReportChartsView: React.FC<ReportChartsViewProps> = ({
         title="Gasto Total por Categoria"
         subtitle="Distribuição em gráfico de rosca (Alimentação, Higiene, Limpeza)"
       />
-
-      {/* 3 Category Cards with Progress Bars */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4">
-        {matrixData.map((group) => (
-          <div
-            key={group.tipo}
-            className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-2.5 sm:space-y-3"
-          >
-            <div className="flex items-center justify-between">
-              <h4 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-1.5">
-                <PieChart className="w-4 h-4 text-slate-500 shrink-0" />
-                <span>{group.shortName}</span>
-              </h4>
-              <span className="text-xs font-black px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono">
-                {group.percent.toFixed(1)}%
-              </span>
-            </div>
-
-            <div className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight font-mono">
-              {formatBRL(group.totalValor)}
-            </div>
-
-            {/* Progress bar */}
-            <div className="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all duration-500 ${
-                  group.iconType === 'food'
-                    ? 'bg-emerald-500'
-                    : group.iconType === 'hygiene'
-                    ? 'bg-sky-500'
-                    : 'bg-amber-500'
-                }`}
-                style={{ width: `${Math.min(100, Math.max(0, group.percent))}%` }}
-              />
-            </div>
-
-            <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400">
-              {group.itemCount} {group.itemCount === 1 ? 'item registrado' : 'itens registrados'} nessa categoria
-            </p>
-          </div>
-        ))}
-      </div>
 
       {/* Top 10 Subcategories Ranking */}
       <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">

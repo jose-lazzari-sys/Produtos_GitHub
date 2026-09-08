@@ -89,7 +89,22 @@ function TabLoadingFallback() {
 
 export default function App() {
   // Navigation: 'scanner' (Screen 1) | 'report' (Screen 2: Tabela / Relatório & Dashboard) | 'nfApp' (Screen 3) | 'actions' (Screen 4)
-  const [activeTab, setActiveTab] = useState<'scanner' | 'report' | 'nfApp' | 'actions'>('scanner');
+  const [activeTab, setActiveTabState] = useState<'scanner' | 'report' | 'nfApp' | 'actions'>(() => {
+    try {
+      const saved = localStorage.getItem('compras_active_tab');
+      if (saved === 'scanner' || saved === 'report' || saved === 'nfApp' || saved === 'actions') {
+        return saved;
+      }
+    } catch {}
+    return 'scanner';
+  });
+
+  const setActiveTab = (tab: 'scanner' | 'report' | 'nfApp' | 'actions') => {
+    setActiveTabState(tab);
+    try {
+      localStorage.setItem('compras_active_tab', tab);
+    } catch {}
+  };
 
   // Persistence State
   const [items, setItems] = useState<NFCeItem[]>([]);

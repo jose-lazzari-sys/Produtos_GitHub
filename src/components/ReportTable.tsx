@@ -269,14 +269,18 @@ export const ReportTable: React.FC<ReportTableProps> = ({
     const map = new Map<string, number>();
     itemsForProduto.forEach((it) => {
       const p = normalizeProduto(it.produto, it.tipo).toLowerCase();
-      if (p && p !== 'outros') {
+      if (p) {
         map.set(p, (map.get(p) || 0) + 1);
       }
     });
 
     return Array.from(map.entries())
       .map(([prod, count]) => ({ prod, count }))
-      .sort((a, b) => a.prod.localeCompare(b.prod));
+      .sort((a, b) => {
+        if (a.prod === 'outros') return 1;
+        if (b.prod === 'outros') return -1;
+        return a.prod.localeCompare(b.prod);
+      });
   }, [itemsForProduto]);
 
   // Available Dates with counts (sorted most recent to oldest)

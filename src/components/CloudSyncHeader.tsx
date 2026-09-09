@@ -113,6 +113,28 @@ export const CloudSyncHeader: React.FC<CloudSyncHeaderProps> = ({
         </button>
       )}
 
+      {/* Quick Manual Sync Button */}
+      {(accessRole || user) && (
+        <button
+          id="cloud-manual-sync-header-btn"
+          type="button"
+          onClick={() => {
+            onManualSync();
+            showToast('Sincronizando com a Nuvem...');
+          }}
+          disabled={isSyncing}
+          className={`p-1.5 rounded-xl border text-xs font-semibold transition-all flex items-center justify-center ${
+            isSyncing
+              ? 'bg-emerald-100 dark:bg-emerald-950/80 border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300'
+              : 'bg-white dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:text-emerald-600 dark:hover:text-emerald-400 shadow-xs'
+          }`}
+          title={isSyncing ? "Sincronizando agora..." : "Clique para sincronizar imediatamente com a Nuvem"}
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-emerald-600' : ''}`} />
+          <span className="sr-only">Sincronizar</span>
+        </button>
+      )}
+
       {/* Google Account Cloud Status (if logged in or if needed) */}
       {user ? (
         <div className="relative">

@@ -123,7 +123,7 @@ function computeDataHash(items: NFCeItem[], receipts: NFCeReceipt[]): string {
   let hash = 0;
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
-    const s = `${it.id || ''}:${it.tipo || ''}:${it.produto || ''}:${it.detalhe || ''}:${it.valorTotal || 0}:${it.data || ''}`;
+    const s = `${it.id || ''}:${it.tipo || ''}:${it.produto || ''}:${it.detalhe || ''}:${it.valorTotal || 0}:${it.data || ''}:${it.updatedAt || 0}`;
     for (let j = 0; j < s.length; j++) {
       hash = ((hash << 5) - hash + s.charCodeAt(j)) | 0;
     }
@@ -181,25 +181,80 @@ export function mergeReceiptsWithCloud(localReceipts: NFCeReceipt[], cloudReceip
 }
 
 /**
- * Merges local and cloud items safely, retaining receiptId linkages
+ * Merges local and cloud items safely, retaining classification and receipt linkages.
+ * Prioritizes explicitly edited/classified items and newer timestamps.
  */
 export function mergeItemsWithCloud(localItems: NFCeItem[], cloudItems: NFCeItem[]): NFCeItem[] {
   const itemMap = new Map<string, NFCeItem>();
+  const secondaryKeyMap = new Map<string, string>(); // secondaryKey -> primaryKey
+
+  const getSecondaryKey = (it: NFCeItem) => {
+    const desc = (it.descricao || '').trim().toLowerCase();
+    const dt = (it.data || '').trim();
+    const val = Number(it.valorTotal || 0).toFixed(2);
+    const num = it.num != null ? it.num : '';
+    return `${dt}___${desc}___${val}___${num}`;
+  };
+
+  // 1. Populate from cloud items
   for (const ci of cloudItems) {
-    itemMap.set(ci.id, ci);
+    const primaryKey = ci.id || getSecondaryKey(ci);
+    itemMap.set(primaryKey, { ...ci });
+    const secKey = getSecondaryKey(ci);
+    if (secKey) secondaryKeyMap.set(secKey, primaryKey);
   }
+
+  // 2. Merge local items safely
   for (const li of localItems) {
-    const existing = itemMap.get(li.id);
-    if (existing) {
-      itemMap.set(li.id, {
+    const primaryKey = li.id || getSecondaryKey(li);
+    const secKey = getSecondaryKey(li);
+
+    let matchedKey: string | undefined = undefined;
+    if (itemMap.has(primaryKey)) {
+      matchedKey = primaryKey;
+    } else if (secKey && secondaryKeyMap.has(secKey)) {
+      matchedKey = secondaryKeyMap.get(secKey);
+    }
+
+    if (matchedKey && itemMap.has(matchedKey)) {
+      const existing = itemMap.get(matchedKey)!;
+
+      const liTs = li.updatedAt || 0;
+      const ciTs = existing.updatedAt || 0;
+
+      let winner: NFCeItem;
+      if (liTs > 0 && ciTs > 0) {
+        winner = liTs >= ciTs ? li : existing;
+      } else if (liTs > 0 && !ciTs) {
+        winner = li;
+      } else if (ciTs > 0 && !liTs) {
+        winner = existing;
+      } else {
+        // Neither has timestamp: check user reclassification
+        const liIsClassified = li.tipo && li.tipo !== 'Outros' && li.produto && li.produto !== 'Outros';
+        const ciIsClassified = existing.tipo && existing.tipo !== 'Outros' && existing.produto && existing.produto !== 'Outros';
+
+        if (ciIsClassified && !liIsClassified) {
+          winner = existing; // Cloud version has been reclassified
+        } else if (liIsClassified && !ciIsClassified) {
+          winner = li; // Local version has been reclassified
+        } else {
+          // Cloud is the default shared source of truth across devices
+          winner = existing;
+        }
+      }
+
+      itemMap.set(matchedKey, {
         ...existing,
-        ...li,
-        receiptId: li.receiptId || existing.receiptId
+        ...winner,
+        receiptId: winner.receiptId || existing.receiptId || li.receiptId
       });
     } else {
-      itemMap.set(li.id, li);
+      itemMap.set(primaryKey, { ...li });
+      if (secKey) secondaryKeyMap.set(secKey, primaryKey);
     }
   }
+
   return Array.from(itemMap.values());
 }
 
@@ -544,12 +599,16 @@ export function subscribeToCloudData(
           lastSyncedDataHash = computeDataHash(mergedItems, mergedReceipts);
           onData(getStoredItems(), getStoredReceipts());
 
-          // If local had a 'Sim' or updated status that is not in the cloud yet, push it up
+          // If local had a 'Sim' or updated classification that is not in the cloud yet, push it up
           const cloudHasAllConferidos = cloudReceipts.length > 0 && cloudReceipts.every(cr => {
             const match = mergedReceipts.find(mr => mr.id === cr.id || (mr.data === cr.data && mr.razaoSocial === cr.razaoSocial));
             return !match || (match.conferido === cr.conferido);
           });
-          if (!cloudHasAllConferidos && !isQuotaExceededFlag && !isReadOnly) {
+          const cloudHasAllClassifications = cloudItems.length > 0 && mergedItems.every(mi => {
+            const match = cloudItems.find(ci => ci.id === mi.id || (ci.data === mi.data && ci.descricao === mi.descricao && ci.num === mi.num));
+            return !match || (match.tipo === mi.tipo && match.produto === mi.produto && match.detalhe === mi.detalhe);
+          });
+          if ((!cloudHasAllConferidos || !cloudHasAllClassifications) && !isQuotaExceededFlag && !isReadOnly) {
             debouncedSyncToCloud(targetId, mergedItems, mergedReceipts, auth.currentUser?.email || (isSharedSpace ? 'jal_completo' : null), 2500, isSharedSpace);
           }
         }

@@ -14,6 +14,7 @@ export interface NFCeItem {
   tipo: string; // Alimentação, Higiene Pessoal, Limpeza Doméstica, Outros
   produto: string; // e.g. açougue/Peixaria, bebidas, etc.
   detalhe: string; // e.g. carne, peixe, linguiça, etc.
+  updatedAt?: number; // Timestamp of last edit/reclassification
 }
 
 export interface NFCeReceipt {

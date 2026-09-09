@@ -465,6 +465,7 @@ export function updateStoredItem(updatedItem: NFCeItem): NFCeItem[] {
     tipo: getItemTipo(updatedItem.tipo),
     produto: (updatedItem.produto || 'Outros').trim(),
     detalhe: (updatedItem.detalhe || 'Outros').trim(),
+    updatedAt: Date.now(),
   };
 
   if (index !== -1) {

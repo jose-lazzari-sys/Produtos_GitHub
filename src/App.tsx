@@ -347,14 +347,15 @@ export default function App() {
       if (accessRole) {
         const cloudData = await loadSharedSpace();
         if (cloudData) {
-          if (cloudData.items.length > 0) {
-            saveStoredItems(cloudData.items);
-            setItems(cloudData.items);
-          }
-          if (cloudData.receipts.length > 0) {
-            saveStoredReceipts(cloudData.receipts);
-            setReceipts(cloudData.receipts);
-          }
+          const currentItems = getStoredItems();
+          const currentReceipts = getStoredReceipts();
+          const finalItems = cloudData.items.length > 0 ? mergeItemsWithCloud(currentItems, cloudData.items) : currentItems;
+          const finalReceipts = cloudData.receipts.length > 0 ? mergeReceiptsWithCloud(currentReceipts, cloudData.receipts) : currentReceipts;
+
+          saveStoredItems(finalItems);
+          setItems(finalItems);
+          saveStoredReceipts(finalReceipts);
+          setReceipts(finalReceipts);
           setLastSyncedAt(new Date());
         }
         return;
@@ -366,14 +367,15 @@ export default function App() {
       }
       const cloudData = await loadDataFromCloud(user.uid);
       if (cloudData) {
-        if (cloudData.items.length > 0) {
-          saveStoredItems(cloudData.items);
-          setItems(cloudData.items);
-        }
-        if (cloudData.receipts.length > 0) {
-          saveStoredReceipts(cloudData.receipts);
-          setReceipts(cloudData.receipts);
-        }
+        const currentItems = getStoredItems();
+        const currentReceipts = getStoredReceipts();
+        const finalItems = cloudData.items.length > 0 ? mergeItemsWithCloud(currentItems, cloudData.items) : currentItems;
+        const finalReceipts = cloudData.receipts.length > 0 ? mergeReceiptsWithCloud(currentReceipts, cloudData.receipts) : currentReceipts;
+
+        saveStoredItems(finalItems);
+        setItems(finalItems);
+        saveStoredReceipts(finalReceipts);
+        setReceipts(finalReceipts);
         setLastSyncedAt(new Date());
       }
     } catch (e) {
@@ -402,9 +404,24 @@ export default function App() {
             setLastSyncedAt(new Date());
           }
         } else if (accessRole === 'admin') {
+          const cloudData = await loadSharedSpace();
           const currentItems = getStoredItems();
           const currentReceipts = getStoredReceipts();
-          await syncSharedSpace(currentItems, currentReceipts);
+
+          let finalItems = currentItems;
+          let finalReceipts = currentReceipts;
+
+          if (cloudData && (cloudData.items.length > 0 || cloudData.receipts.length > 0)) {
+            finalItems = mergeItemsWithCloud(currentItems, cloudData.items);
+            finalReceipts = mergeReceiptsWithCloud(currentReceipts, cloudData.receipts);
+          }
+
+          saveStoredItems(finalItems);
+          saveStoredReceipts(finalReceipts);
+          setItems(finalItems);
+          setReceipts(finalReceipts);
+
+          await syncSharedSpace(finalItems, finalReceipts);
           setLastSyncedAt(new Date());
         }
       } catch (err) {

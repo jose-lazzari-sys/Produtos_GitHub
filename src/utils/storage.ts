@@ -5,6 +5,53 @@ import { parseCsvData, parseMatrixData } from './csvImporter';
 
 const STORAGE_KEY_ITEMS = 'nfce_items_v1';
 const STORAGE_KEY_RECEIPTS = 'nfce_receipts_v1';
+export const STORAGE_KEY_TOMBSTONES = 'app_deleted_receipt_tombstones';
+
+// Pre-seeded signatures of explicitly deleted receipts to prevent any phantom cloud resurrection
+const DEFAULT_PRE_TOMBSTONES = [
+  'rcpt_1788536089095_tkxn9yz_797897',
+  '03/04/2026 07:38:00___emporio kimoto ltda___77.43',
+  'rcpt_1788536088818_vj88oyy_742262',
+  '17/03/2026 08:21:00___emporio kimoto ltda___143.02'
+];
+
+export function getDeletedReceiptTombstones(): Set<string> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_TOMBSTONES);
+    const arr = raw ? JSON.parse(raw) : [];
+    const set = new Set<string>(Array.isArray(arr) ? arr : []);
+    DEFAULT_PRE_TOMBSTONES.forEach(item => set.add(item));
+    return set;
+  } catch {
+    return new Set(DEFAULT_PRE_TOMBSTONES);
+  }
+}
+
+export function addDeletedReceiptTombstones(receipts: NFCeReceipt[]): void {
+  try {
+    const tombstones = getDeletedReceiptTombstones();
+    for (const r of receipts) {
+      if (r.id) tombstones.add(r.id);
+      const dt = (r.data || '').trim();
+      const rz = (r.razaoSocial || '').trim().toLowerCase();
+      const val = Number(r.valorTotal || 0).toFixed(2);
+      tombstones.add(`${dt}___${rz}___${val}`);
+      if (r.chaveAcesso) tombstones.add(r.chaveAcesso.trim());
+    }
+    localStorage.setItem(STORAGE_KEY_TOMBSTONES, JSON.stringify(Array.from(tombstones)));
+  } catch {}
+}
+
+export function isReceiptTombstoned(receipt: NFCeReceipt, customTombstones?: Set<string>): boolean {
+  const ts = customTombstones || getDeletedReceiptTombstones();
+  if (receipt.id && ts.has(receipt.id)) return true;
+  const dt = (receipt.data || '').trim();
+  const rz = (receipt.razaoSocial || '').trim().toLowerCase();
+  const val = Number(receipt.valorTotal || 0).toFixed(2);
+  if (ts.has(`${dt}___${rz}___${val}`)) return true;
+  if (receipt.chaveAcesso && ts.has(receipt.chaveAcesso.trim())) return true;
+  return false;
+}
 
 export function generateUniqueId(prefix = 'item'): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}_${Math.floor(Math.random() * 1000000)}`;
@@ -138,15 +185,20 @@ export function getStoredItems(): NFCeItem[] {
     });
 
     const normalized = normalizeItemsNumbering(sanitized);
+    const tombstones = getDeletedReceiptTombstones();
+    const activeItems = normalized.filter(it => {
+      if (it.receiptId && tombstones.has(it.receiptId)) return false;
+      return true;
+    });
 
-    if (normalized.some((it, i) => it.num !== items[i]?.num)) {
+    if (activeItems.length !== normalized.length || normalized.some((it, i) => it.num !== items[i]?.num)) {
       hasChanged = true;
     }
 
     if (hasChanged) {
-      saveStoredItems(normalized);
+      saveStoredItems(activeItems);
     }
-    return normalized;
+    return activeItems;
   } catch (err) {
     console.error('Error loading items from localStorage:', err);
     return [];
@@ -285,10 +337,16 @@ export function getStoredReceipts(): NFCeReceipt[] {
       return sanitizedReceipt;
     });
 
-    if (hasChanged) {
-      saveStoredReceipts(sanitized);
+    const tombstones = getDeletedReceiptTombstones();
+    const activeReceipts = sanitized.filter(r => !isReceiptTombstoned(r, tombstones));
+    if (activeReceipts.length !== sanitized.length) {
+      hasChanged = true;
     }
-    return sanitized;
+
+    if (hasChanged) {
+      saveStoredReceipts(activeReceipts);
+    }
+    return activeReceipts;
   } catch (err) {
     console.error('Error loading receipts from localStorage:', err);
     return [];
@@ -1002,6 +1060,7 @@ export function deleteMultipleReceiptsAndTheirItems(receiptIds: string[]): { ite
   const currentItems = getStoredItems();
 
   const targetReceipts = currentReceipts.filter(r => targetIdSet.has(r.id));
+  addDeletedReceiptTombstones(targetReceipts);
   const targetDateStoreKeys = new Set(targetReceipts.map(r => `${r.data}___${r.razaoSocial}`));
 
   const updatedReceipts = currentReceipts.filter(r => !targetIdSet.has(r.id));

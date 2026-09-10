@@ -42,6 +42,7 @@ import {
   loadDataFromCloud,
   subscribeToCloudData,
   subscribeToQuotaStatus,
+  isCloudQuotaExceeded,
   getSavedAccessCode,
   validateAccessCode,
   clearAccessCode,
@@ -162,11 +163,12 @@ export default function App() {
 
       if (data && (data.items.length > 0 || data.receipts.length > 0)) {
         // In admin role, safely merge to preserve local 'Sim' statuses marked on this device
+        const receiptIdMap = new Map<string, string>();
         const mergedReceipts = accessRole === 'admin'
-          ? mergeReceiptsWithCloud(localReceipts, data.receipts)
+          ? mergeReceiptsWithCloud(localReceipts, data.receipts, receiptIdMap)
           : (data.receipts.length > 0 ? data.receipts : localReceipts);
         const mergedItems = accessRole === 'admin'
-          ? mergeItemsWithCloud(localItems, data.items)
+          ? mergeItemsWithCloud(localItems, data.items, receiptIdMap)
           : (data.items.length > 0 ? data.items : localItems);
 
         setItems(mergedItems);
@@ -175,18 +177,18 @@ export default function App() {
         saveStoredReceipts(mergedReceipts);
 
         // If this device had conferido === 'Sim' that was missing in the cloud, push merged back to cloud!
-        if (accessRole === 'admin') {
+        if (accessRole === 'admin' && !isCloudQuotaExceeded()) {
           const hasUnsyncedConferido = mergedReceipts.some(mr => {
             const cr = data.receipts.find(r => r.id === mr.id || (r.data === mr.data && r.razaoSocial === mr.razaoSocial));
             return mr.conferido === 'Sim' && (!cr || cr.conferido !== 'Sim');
           });
           if (hasUnsyncedConferido) {
-            syncSharedSpace(mergedItems, mergedReceipts);
+            syncSharedSpace(mergedItems, mergedReceipts).catch(() => {});
           }
         }
-      } else if (accessRole === 'admin' && (localItems.length > 0 || localReceipts.length > 0)) {
+      } else if (accessRole === 'admin' && !isCloudQuotaExceeded() && (localItems.length > 0 || localReceipts.length > 0)) {
         // Shared space is empty, initialize it with this admin device's local data
-        syncSharedSpace(localItems, localReceipts);
+        syncSharedSpace(localItems, localReceipts).catch(() => {});
       }
       setIsSyncing(false);
       setLastSyncedAt(new Date());
@@ -231,10 +233,10 @@ export default function App() {
         // If this device has local items, ensure they are uploaded to the cloud immediately
         const initialLocalItems = getStoredItems();
         const initialLocalReceipts = getStoredReceipts();
-        if (initialLocalItems.length > 0) {
+        if (initialLocalItems.length > 0 && !isCloudQuotaExceeded()) {
           syncDataToCloud(currentUser.uid, initialLocalItems, initialLocalReceipts, currentUser.email)
             .then(() => setLastSyncedAt(new Date()))
-            .catch(console.error);
+            .catch(() => {});
         }
 
         // Subscribe to real-time updates from Firestore
@@ -277,6 +279,7 @@ export default function App() {
   // Helper to sync to Cloud whenever state changes if user is logged in or admin code is active
   const syncChangesToCloud = (newItems: NFCeItem[], newReceipts: NFCeReceipt[]) => {
     if (isReadOnly) return; // Strict safety: no changes pushed in read-only mode
+    if (isCloudQuotaExceeded()) return; // Skip writes while quota is exceeded, local storage is active
 
     if (user) {
       debouncedSyncToCloud(user.uid, newItems, newReceipts, user.email);
@@ -316,6 +319,10 @@ export default function App() {
   // Force upload current local items to Firestore
   const handleForceUpload = async () => {
     if (isReadOnly) return;
+    if (isCloudQuotaExceeded()) {
+      alert('A cota diária gratuita do Firestore está temporariamente atingida. Todos os dados permanecem 100% salvos e seguros no seu dispositivo.');
+      return;
+    }
     if (accessRole === 'admin') {
       setIsSyncing(true);
       try {
@@ -349,8 +356,9 @@ export default function App() {
         if (cloudData) {
           const currentItems = getStoredItems();
           const currentReceipts = getStoredReceipts();
-          const finalItems = cloudData.items.length > 0 ? mergeItemsWithCloud(currentItems, cloudData.items) : currentItems;
-          const finalReceipts = cloudData.receipts.length > 0 ? mergeReceiptsWithCloud(currentReceipts, cloudData.receipts) : currentReceipts;
+          const receiptIdMap = new Map<string, string>();
+          const finalReceipts = cloudData.receipts.length > 0 ? mergeReceiptsWithCloud(currentReceipts, cloudData.receipts, receiptIdMap) : currentReceipts;
+          const finalItems = cloudData.items.length > 0 ? mergeItemsWithCloud(currentItems, cloudData.items, receiptIdMap) : currentItems;
 
           saveStoredItems(finalItems);
           setItems(finalItems);
@@ -362,15 +370,16 @@ export default function App() {
       }
 
       if (!user) {
-        await handleLogin();
+        setIsAccessModalOpen(true);
         return;
       }
       const cloudData = await loadDataFromCloud(user.uid);
       if (cloudData) {
         const currentItems = getStoredItems();
         const currentReceipts = getStoredReceipts();
-        const finalItems = cloudData.items.length > 0 ? mergeItemsWithCloud(currentItems, cloudData.items) : currentItems;
-        const finalReceipts = cloudData.receipts.length > 0 ? mergeReceiptsWithCloud(currentReceipts, cloudData.receipts) : currentReceipts;
+        const receiptIdMap = new Map<string, string>();
+        const finalReceipts = cloudData.receipts.length > 0 ? mergeReceiptsWithCloud(currentReceipts, cloudData.receipts, receiptIdMap) : currentReceipts;
+        const finalItems = cloudData.items.length > 0 ? mergeItemsWithCloud(currentItems, cloudData.items, receiptIdMap) : currentItems;
 
         saveStoredItems(finalItems);
         setItems(finalItems);
@@ -412,8 +421,9 @@ export default function App() {
           let finalReceipts = currentReceipts;
 
           if (cloudData && (cloudData.items.length > 0 || cloudData.receipts.length > 0)) {
-            finalItems = mergeItemsWithCloud(currentItems, cloudData.items);
-            finalReceipts = mergeReceiptsWithCloud(currentReceipts, cloudData.receipts);
+            const receiptIdMap = new Map<string, string>();
+            finalReceipts = mergeReceiptsWithCloud(currentReceipts, cloudData.receipts, receiptIdMap);
+            finalItems = mergeItemsWithCloud(currentItems, cloudData.items, receiptIdMap);
           }
 
           saveStoredItems(finalItems);
@@ -421,7 +431,9 @@ export default function App() {
           setItems(finalItems);
           setReceipts(finalReceipts);
 
-          await syncSharedSpace(finalItems, finalReceipts);
+          if (!isCloudQuotaExceeded()) {
+            await syncSharedSpace(finalItems, finalReceipts);
+          }
           setLastSyncedAt(new Date());
         }
       } catch (err) {
@@ -433,7 +445,7 @@ export default function App() {
     }
 
     if (!user) {
-      handleLogin();
+      setIsAccessModalOpen(true);
       return;
     }
     const currentItems = getStoredItems();
@@ -1031,11 +1043,12 @@ export default function App() {
                 const localReceipts = getStoredReceipts();
 
                 if (data && (data.items.length > 0 || data.receipts.length > 0)) {
+                  const receiptIdMap = new Map<string, string>();
                   const mergedReceipts = role === 'admin'
-                    ? mergeReceiptsWithCloud(localReceipts, data.receipts)
+                    ? mergeReceiptsWithCloud(localReceipts, data.receipts, receiptIdMap)
                     : (data.receipts.length > 0 ? data.receipts : localReceipts);
                   const mergedItems = role === 'admin'
-                    ? mergeItemsWithCloud(localItems, data.items)
+                    ? mergeItemsWithCloud(localItems, data.items, receiptIdMap)
                     : (data.items.length > 0 ? data.items : localItems);
 
                   setItems(mergedItems);

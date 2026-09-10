@@ -113,6 +113,17 @@ export const CloudSyncHeader: React.FC<CloudSyncHeaderProps> = ({
         </button>
       )}
 
+      {/* Quota Exceeded Badge for Access Code users */}
+      {isQuotaExceeded && !user && (
+        <div 
+          className="flex items-center gap-1.5 py-1 px-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-200 text-xs font-medium"
+          title="A cota diária gratuita do Firestore está temporariamente atingida. Todos os dados permanecem 100% salvos e seguros no seu dispositivo."
+        >
+          <CloudOff className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+          <span className="hidden sm:inline">Modo Local Seguro</span>
+        </div>
+      )}
+
       {/* Quick Manual Sync Button */}
       {(accessRole || user) && (
         <button

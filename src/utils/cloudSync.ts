@@ -17,7 +17,14 @@ import {
   User 
 } from '../lib/firebase';
 import { NFCeItem, NFCeReceipt } from '../types';
-import { getStoredItems, getStoredReceipts, saveStoredItems, saveStoredReceipts } from './storage';
+import { 
+  getStoredItems, 
+  getStoredReceipts, 
+  saveStoredItems, 
+  saveStoredReceipts,
+  getDeletedReceiptTombstones,
+  isReceiptTombstoned
+} from './storage';
 
 export interface CloudSyncState {
   user: User | null;
@@ -45,6 +52,8 @@ export const SHARED_SPACE_ID = 'jal_compras';
 export function validateAccessCode(rawCode?: string | null): AccessCodeConfig | null {
   if (!rawCode) return null;
   const clean = rawCode.trim().toLowerCase();
+  
+  // Exigência estrita: digitação exata, sem nenhuma tolerância para variações ou abreviações
   if (clean === ADMIN_CODE) {
     return {
       code: ADMIN_CODE,
@@ -52,6 +61,7 @@ export function validateAccessCode(rawCode?: string | null): AccessCodeConfig | 
       label: 'Administrador (Acesso Total)'
     };
   }
+  
   if (clean === CONSULTA_CODE) {
     return {
       code: CONSULTA_CODE,
@@ -59,12 +69,22 @@ export function validateAccessCode(rawCode?: string | null): AccessCodeConfig | 
       label: 'Consulta (Somente Leitura)'
     };
   }
+  
   return null;
 }
 
 export function getSavedAccessCode(): string {
   try {
-    return localStorage.getItem('app_access_code') || '';
+    const saved = localStorage.getItem('app_access_code');
+    if (!saved || saved === 'desconectado' || saved === 'offline') {
+      return '';
+    }
+    const clean = saved.trim().toLowerCase();
+    // Exigência estrita: sem conexão automática por padrão; somente conecta se houver digitação exata prévia
+    if (clean === ADMIN_CODE || clean === CONSULTA_CODE) {
+      return clean;
+    }
+    return '';
   } catch {
     return '';
   }
@@ -78,7 +98,7 @@ export function saveAccessCode(code: string): void {
 
 export function clearAccessCode(): void {
   try {
-    localStorage.removeItem('app_access_code');
+    localStorage.setItem('app_access_code', 'desconectado');
   } catch {}
 }
 
@@ -88,7 +108,23 @@ const ITEMS_PER_CHUNK = 200;
 let syncListenerUnsubscribe: (() => void) | null = null;
 let syncDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let lastSyncedDataHash = '';
-let isQuotaExceededFlag = false;
+const QUOTA_STORAGE_KEY = 'app_firestore_quota_exceeded_ts';
+// Cooldown duration: daily quota resets once per day (~12-24h). We keep writes paused for 6 hours unless manually reset.
+const QUOTA_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+
+let isQuotaExceededFlag = (() => {
+  try {
+    const raw = localStorage.getItem(QUOTA_STORAGE_KEY);
+    if (raw) {
+      const ts = parseInt(raw, 10);
+      if (Date.now() - ts < QUOTA_COOLDOWN_MS) {
+        return true;
+      }
+    }
+  } catch {}
+  return false;
+})();
+
 let lastKnownChunkCount = (() => {
   try {
     return parseInt(localStorage.getItem('app_last_cloud_chunk_count') || '0', 10) || 0;
@@ -100,22 +136,46 @@ let lastKnownChunkCount = (() => {
 const quotaListeners: Set<(exceeded: boolean) => void> = new Set();
 
 export function isCloudQuotaExceeded(): boolean {
-  return isQuotaExceededFlag;
+  if (isQuotaExceededFlag) return true;
+  try {
+    const raw = localStorage.getItem(QUOTA_STORAGE_KEY);
+    if (raw) {
+      const ts = parseInt(raw, 10);
+      if (Date.now() - ts < QUOTA_COOLDOWN_MS) {
+        isQuotaExceededFlag = true;
+        return true;
+      } else {
+        localStorage.removeItem(QUOTA_STORAGE_KEY);
+      }
+    }
+  } catch {}
+  return false;
 }
 
 export function subscribeToQuotaStatus(listener: (exceeded: boolean) => void): () => void {
   quotaListeners.add(listener);
-  listener(isQuotaExceededFlag);
+  listener(isCloudQuotaExceeded());
   return () => {
     quotaListeners.delete(listener);
   };
 }
 
-function setQuotaExceeded(exceeded: boolean) {
-  if (isQuotaExceededFlag !== exceeded) {
-    isQuotaExceededFlag = exceeded;
-    quotaListeners.forEach(fn => fn(exceeded));
-  }
+export function setQuotaExceeded(exceeded: boolean): void {
+  isQuotaExceededFlag = exceeded;
+  try {
+    if (exceeded) {
+      localStorage.setItem(QUOTA_STORAGE_KEY, String(Date.now()));
+    } else {
+      localStorage.removeItem(QUOTA_STORAGE_KEY);
+    }
+  } catch {}
+  quotaListeners.forEach(fn => {
+    try { fn(exceeded); } catch {}
+  });
+}
+
+export function resetQuotaExceededFlag(): void {
+  setQuotaExceeded(false);
 }
 
 // Helper to prevent redundant writes if payload hasn't changed
@@ -138,22 +198,65 @@ function computeDataHash(items: NFCeItem[], receipts: NFCeReceipt[]): string {
 }
 
 /**
- * Merges local and cloud receipts safely, preserving conferido statuses and timestamps
+ * Merges local and cloud receipts safely, preserving conferido statuses, eliminating duplicates,
+ * and maintaining stable cross-device receipt IDs.
  */
-export function mergeReceiptsWithCloud(localReceipts: NFCeReceipt[], cloudReceipts: NFCeReceipt[]): NFCeReceipt[] {
+export function mergeReceiptsWithCloud(
+  localReceipts: NFCeReceipt[], 
+  cloudReceipts: NFCeReceipt[],
+  receiptIdMap?: Map<string, string>
+): NFCeReceipt[] {
+  const tombstones = getDeletedReceiptTombstones();
   const map = new Map<string, NFCeReceipt>();
+  const secondaryKeyMap = new Map<string, string>(); // secondaryKey -> primaryKey
+  const chaveMap = new Map<string, string>(); // chaveAcesso -> primaryKey
 
-  // 1. Index cloud receipts
+  const getReceiptSecondaryKey = (rc: NFCeReceipt): string => {
+    const dt = (rc.data || '').trim();
+    const rz = (rc.razaoSocial || '').trim().toLowerCase();
+    const val = Number(rc.valorTotal || 0).toFixed(2);
+    return `${dt}___${rz}___${val}`;
+  };
+
+  const getChaveKey = (rc: NFCeReceipt): string => {
+    return rc.chaveAcesso ? rc.chaveAcesso.trim() : '';
+  };
+
+  // 1. Index cloud receipts (Strictly skip any tombstoned / deleted receipts)
   for (const cr of cloudReceipts) {
-    const key = cr.id || `${cr.data}___${cr.razaoSocial}`;
-    map.set(key, { ...cr });
+    if (isReceiptTombstoned(cr, tombstones)) {
+      continue;
+    }
+    const primaryKey = cr.id || getReceiptSecondaryKey(cr);
+    map.set(primaryKey, { ...cr });
+
+    const secKey = getReceiptSecondaryKey(cr);
+    if (secKey) secondaryKeyMap.set(secKey, primaryKey);
+
+    const chKey = getChaveKey(cr);
+    if (chKey) chaveMap.set(chKey, primaryKey);
   }
 
-  // 2. Merge local receipts, ensuring conferido is never prematurely lost
+  // 2. Merge local receipts, ensuring conferido is never prematurely lost and duplicates are eliminated
   for (const lr of localReceipts) {
-    const key = lr.id || `${lr.data}___${lr.razaoSocial}`;
-    const existing = map.get(key);
-    if (existing) {
+    if (isReceiptTombstoned(lr, tombstones)) {
+      continue;
+    }
+    const primaryKey = lr.id || getReceiptSecondaryKey(lr);
+    const secKey = getReceiptSecondaryKey(lr);
+    const chKey = getChaveKey(lr);
+
+    let matchedKey: string | undefined = undefined;
+    if (map.has(primaryKey)) {
+      matchedKey = primaryKey;
+    } else if (chKey && chaveMap.has(chKey)) {
+      matchedKey = chaveMap.get(chKey);
+    } else if (secKey && secondaryKeyMap.has(secKey)) {
+      matchedKey = secondaryKeyMap.get(secKey);
+    }
+
+    if (matchedKey && map.has(matchedKey)) {
+      const existing = map.get(matchedKey)!;
       let finalConferido: 'Sim' | '-' = lr.conferido === 'Sim' ? 'Sim' : '-';
       const lrTs = lr.conferidoUpdatedAt || 0;
       const crTs = existing.conferidoUpdatedAt || 0;
@@ -166,14 +269,22 @@ export function mergeReceiptsWithCloud(localReceipts: NFCeReceipt[], cloudReceip
         finalConferido = 'Sim';
       }
 
-      map.set(key, {
+      // Record ID mapping if local ID differs from unified ID
+      if (receiptIdMap && lr.id && existing.id && lr.id !== existing.id) {
+        receiptIdMap.set(lr.id, existing.id);
+      }
+
+      map.set(matchedKey, {
         ...existing,
         ...lr,
+        id: existing.id || lr.id, // Prefer existing cloud id for stable linkage
         conferido: finalConferido,
         conferidoUpdatedAt: Math.max(lrTs, crTs)
       });
     } else {
-      map.set(key, lr);
+      map.set(primaryKey, { ...lr });
+      if (secKey) secondaryKeyMap.set(secKey, primaryKey);
+      if (chKey) chaveMap.set(chKey, primaryKey);
     }
   }
 
@@ -184,7 +295,12 @@ export function mergeReceiptsWithCloud(localReceipts: NFCeReceipt[], cloudReceip
  * Merges local and cloud items safely, retaining classification and receipt linkages.
  * Prioritizes explicitly edited/classified items and newer timestamps.
  */
-export function mergeItemsWithCloud(localItems: NFCeItem[], cloudItems: NFCeItem[]): NFCeItem[] {
+export function mergeItemsWithCloud(
+  localItems: NFCeItem[], 
+  cloudItems: NFCeItem[],
+  receiptIdMap?: Map<string, string>
+): NFCeItem[] {
+  const tombstones = getDeletedReceiptTombstones();
   const itemMap = new Map<string, NFCeItem>();
   const secondaryKeyMap = new Map<string, string>(); // secondaryKey -> primaryKey
 
@@ -196,8 +312,9 @@ export function mergeItemsWithCloud(localItems: NFCeItem[], cloudItems: NFCeItem
     return `${dt}___${desc}___${val}___${num}`;
   };
 
-  // 1. Populate from cloud items
+  // 1. Populate from cloud items (strictly ignore items belonging to tombstoned receipts)
   for (const ci of cloudItems) {
+    if (ci.receiptId && tombstones.has(ci.receiptId)) continue;
     const primaryKey = ci.id || getSecondaryKey(ci);
     itemMap.set(primaryKey, { ...ci });
     const secKey = getSecondaryKey(ci);
@@ -206,8 +323,12 @@ export function mergeItemsWithCloud(localItems: NFCeItem[], cloudItems: NFCeItem
 
   // 2. Merge local items safely
   for (const li of localItems) {
+    if (li.receiptId && tombstones.has(li.receiptId)) continue;
     const primaryKey = li.id || getSecondaryKey(li);
     const secKey = getSecondaryKey(li);
+    const mappedReceiptId = receiptIdMap && li.receiptId && receiptIdMap.has(li.receiptId)
+      ? receiptIdMap.get(li.receiptId)
+      : li.receiptId;
 
     let matchedKey: string | undefined = undefined;
     if (itemMap.has(primaryKey)) {
@@ -247,10 +368,13 @@ export function mergeItemsWithCloud(localItems: NFCeItem[], cloudItems: NFCeItem
       itemMap.set(matchedKey, {
         ...existing,
         ...winner,
-        receiptId: winner.receiptId || existing.receiptId || li.receiptId
+        receiptId: existing.receiptId || winner.receiptId || mappedReceiptId
       });
     } else {
-      itemMap.set(primaryKey, { ...li });
+      itemMap.set(primaryKey, {
+        ...li,
+        receiptId: mappedReceiptId
+      });
       if (secKey) secondaryKeyMap.set(secKey, primaryKey);
     }
   }
@@ -337,7 +461,7 @@ export async function syncDataToCloud(
   userEmail?: string | null,
   isSharedSpace = false
 ): Promise<boolean> {
-  if (isQuotaExceededFlag) {
+  if (isCloudQuotaExceeded()) {
     // Graceful skip when daily free quota is already known to be exhausted
     return false;
   }
@@ -405,9 +529,17 @@ export async function syncDataToCloud(
     setQuotaExceeded(false);
     return true;
   } catch (err: any) {
-    if (err?.code === 'resource-exhausted' || err?.message?.includes('Quota') || err?.message?.includes('resource-exhausted')) {
+    const errMsg = String(err?.message || '');
+    const errCode = String(err?.code || '');
+    if (
+      errCode === 'resource-exhausted' ||
+      errCode === '8' ||
+      errMsg.includes('Quota limit exceeded') ||
+      errMsg.includes('RESOURCE_EXHAUSTED') ||
+      errMsg.includes('resource-exhausted')
+    ) {
       setQuotaExceeded(true);
-      console.warn('⚠️ Limite diário de cota do Firestore atingido. Os dados continuam 100% salvos localmente no seu dispositivo.');
+      console.warn('⚠️ Limite diário de gravações do Firestore atingido. O app está operando em Modo Local Seguro (100% preservado no LocalStorage).');
       return false;
     }
     console.error('Erro ao sincronizar dados com o Firestore:', err);
@@ -426,7 +558,7 @@ export function debouncedSyncToCloud(
   delayMs = 2500,
   isSharedSpace = false
 ): void {
-  if (isQuotaExceededFlag) return;
+  if (isCloudQuotaExceeded()) return;
 
   if (syncDebounceTimer) {
     clearTimeout(syncDebounceTimer);
@@ -444,8 +576,6 @@ export async function loadDataFromCloud(
   targetId: string,
   isSharedSpace = false
 ): Promise<{ items: NFCeItem[]; receipts: NFCeReceipt[] } | null> {
-  if (isQuotaExceededFlag) return null;
-
   try {
     const collectionName = isSharedSpace ? 'spaces' : 'users';
     const targetDocRef = doc(db, collectionName, targetId);
@@ -489,9 +619,17 @@ export async function loadDataFromCloud(
 
     return { items, receipts };
   } catch (err: any) {
-    if (err?.code === 'resource-exhausted' || err?.message?.includes('Quota')) {
+    const errMsg = String(err?.message || '');
+    const errCode = String(err?.code || '');
+    if (
+      errCode === 'resource-exhausted' ||
+      errCode === '8' ||
+      errMsg.includes('Quota limit exceeded') ||
+      errMsg.includes('RESOURCE_EXHAUSTED') ||
+      errMsg.includes('resource-exhausted')
+    ) {
       setQuotaExceeded(true);
-      console.warn('⚠️ Cota de leitura/escrita diária excedida no Firestore. Utilizando dados locais.');
+      console.warn('⚠️ Cota diária gratuita do Firestore atingida no momento. Utilizando dados locais.');
       return null;
     }
     console.error('Erro ao carregar dados do Firestore:', err);
@@ -512,10 +650,6 @@ export function subscribeToCloudData(
   if (syncListenerUnsubscribe) {
     syncListenerUnsubscribe();
     syncListenerUnsubscribe = null;
-  }
-
-  if (isQuotaExceededFlag) {
-    return () => {};
   }
 
   const collectionName = isSharedSpace ? 'spaces' : 'users';
@@ -569,11 +703,8 @@ export function subscribeToCloudData(
           return;
         }
 
-        // If cloud is empty but local has items and we are NOT in readonly mode:
+        // If cloud has no items but local has items:
         if (cloudItems.length === 0 && localItems.length > 0) {
-          if (!isQuotaExceededFlag && !isReadOnly) {
-            debouncedSyncToCloud(targetId, localItems, localReceipts, auth.currentUser?.email || (isSharedSpace ? 'jal_completo' : null), 2500, isSharedSpace);
-          }
           onData(localItems, localReceipts);
           return;
         }
@@ -591,37 +722,30 @@ export function subscribeToCloudData(
 
         // Merge cloud and local data seamlessly without losing local 'Sim' or recent status
         if (cloudItems.length > 0 || cloudReceipts.length > 0) {
-          const mergedReceipts = mergeReceiptsWithCloud(localReceipts, cloudReceipts);
-          const mergedItems = mergeItemsWithCloud(localItems, cloudItems);
+          const receiptIdMap = new Map<string, string>();
+          const mergedReceipts = mergeReceiptsWithCloud(localReceipts, cloudReceipts, receiptIdMap);
+          const mergedItems = mergeItemsWithCloud(localItems, cloudItems, receiptIdMap);
 
           saveStoredItems(mergedItems);
           saveStoredReceipts(mergedReceipts);
           lastSyncedDataHash = computeDataHash(mergedItems, mergedReceipts);
           onData(getStoredItems(), getStoredReceipts());
-
-          // If local had a 'Sim' or updated classification that is not in the cloud yet, push it up
-          const cloudHasAllConferidos = cloudReceipts.length > 0 && cloudReceipts.every(cr => {
-            const match = mergedReceipts.find(mr => mr.id === cr.id || (mr.data === cr.data && mr.razaoSocial === cr.razaoSocial));
-            return !match || (match.conferido === cr.conferido);
-          });
-          const cloudHasAllClassifications = cloudItems.length > 0 && mergedItems.every(mi => {
-            const match = cloudItems.find(ci => ci.id === mi.id || (ci.data === mi.data && ci.descricao === mi.descricao && ci.num === mi.num));
-            return !match || (match.tipo === mi.tipo && match.produto === mi.produto && match.detalhe === mi.detalhe);
-          });
-          if ((!cloudHasAllConferidos || !cloudHasAllClassifications) && !isQuotaExceededFlag && !isReadOnly) {
-            debouncedSyncToCloud(targetId, mergedItems, mergedReceipts, auth.currentUser?.email || (isSharedSpace ? 'jal_completo' : null), 2500, isSharedSpace);
-          }
         }
       } else {
         // Document does not exist in Firestore yet.
-        // If current device has local items and is an admin (not readonly), upload to initialize the shared space!
-        if (localItems.length > 0 && !isReadOnly && !isQuotaExceededFlag) {
-          syncDataToCloud(targetId, localItems, localReceipts, auth.currentUser?.email || (isSharedSpace ? 'jal_completo' : null), isSharedSpace);
-        }
+        onData(localItems, localReceipts);
       }
     },
     (err: any) => {
-      if (err?.code === 'resource-exhausted' || err?.message?.includes('Quota') || err?.message?.includes('resource-exhausted')) {
+      const errMsg = String(err?.message || '');
+      const errCode = String(err?.code || '');
+      if (
+        errCode === 'resource-exhausted' ||
+        errCode === '8' ||
+        errMsg.includes('Quota limit exceeded') ||
+        errMsg.includes('RESOURCE_EXHAUSTED') ||
+        errMsg.includes('resource-exhausted')
+      ) {
         setQuotaExceeded(true);
         if (syncListenerUnsubscribe) {
           syncListenerUnsubscribe();

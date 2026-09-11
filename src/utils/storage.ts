@@ -8,7 +8,7 @@ const STORAGE_KEY_RECEIPTS = 'nfce_receipts_v1';
 export const STORAGE_KEY_TOMBSTONES = 'app_deleted_receipt_tombstones';
 
 // Pre-seeded signatures of explicitly deleted receipts to prevent any phantom cloud resurrection
-const DEFAULT_PRE_TOMBSTONES = [
+export const DEFAULT_PRE_TOMBSTONES = [
   'rcpt_1788536089095_tkxn9yz_797897',
   '03/04/2026 07:38:00___emporio kimoto ltda___77.43',
   'rcpt_1788536088818_vj88oyy_742262',
@@ -18,13 +18,43 @@ const DEFAULT_PRE_TOMBSTONES = [
 export function getDeletedReceiptTombstones(): Set<string> {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_TOMBSTONES);
-    const arr = raw ? JSON.parse(raw) : [];
-    const set = new Set<string>(Array.isArray(arr) ? arr : []);
-    DEFAULT_PRE_TOMBSTONES.forEach(item => set.add(item));
-    return set;
+    if (raw === null) {
+      // First time initialization
+      const set = new Set<string>(DEFAULT_PRE_TOMBSTONES);
+      localStorage.setItem(STORAGE_KEY_TOMBSTONES, JSON.stringify(Array.from(set)));
+      return set;
+    }
+    const arr = JSON.parse(raw);
+    return new Set<string>(Array.isArray(arr) ? arr : []);
   } catch {
     return new Set(DEFAULT_PRE_TOMBSTONES);
   }
+}
+
+export function clearDeletedReceiptTombstones(): void {
+  try {
+    localStorage.setItem(STORAGE_KEY_TOMBSTONES, JSON.stringify([]));
+  } catch {}
+}
+
+export function removeDeletedReceiptTombstones(receipts: NFCeReceipt[], items?: NFCeItem[]): void {
+  try {
+    const tombstones = getDeletedReceiptTombstones();
+    for (const r of receipts) {
+      if (r.id) tombstones.delete(r.id);
+      const dt = (r.data || '').trim();
+      const rz = (r.razaoSocial || '').trim().toLowerCase();
+      const val = Number(r.valorTotal || 0).toFixed(2);
+      tombstones.delete(`${dt}___${rz}___${val}`);
+      if (r.chaveAcesso) tombstones.delete(r.chaveAcesso.trim());
+    }
+    if (items) {
+      for (const it of items) {
+        if (it.receiptId) tombstones.delete(it.receiptId);
+      }
+    }
+    localStorage.setItem(STORAGE_KEY_TOMBSTONES, JSON.stringify(Array.from(tombstones)));
+  } catch {}
 }
 
 export function addDeletedReceiptTombstones(receipts: NFCeReceipt[]): void {
@@ -655,6 +685,7 @@ export function clearAllStorage(): void {
   try {
     localStorage.removeItem(STORAGE_KEY_ITEMS);
     localStorage.removeItem(STORAGE_KEY_RECEIPTS);
+    clearDeletedReceiptTombstones();
   } catch (err) {
     console.error('Error clearing localStorage:', err);
   }
@@ -851,6 +882,11 @@ export function importBackupData(rawContent: string, mode: 'merge' | 'replace' =
         };
       }
       return { success: false, items: [], receipts: [], error: 'O arquivo selecionado não contém itens ou recibos válidos.' };
+    }
+
+    // When deliberately importing/restoring backup data, ensure these receipts are never suppressed by previous deletions
+    if (receiptsToImport.length > 0 || itemsToImport.length > 0) {
+      removeDeletedReceiptTombstones(receiptsToImport, itemsToImport);
     }
 
     // If mode is merge, combine without duplicate IDs

@@ -561,7 +561,7 @@ export const ReportTable: React.FC<ReportTableProps> = ({
               <span>Matriz</span>
             </button>
 
-            {/* Button 3: Visão Gráfica (Rosca e Barras) */}
+            {/* Button 3: Visão Gráfica (Barras por Tipo e Rosca) */}
             <button
               type="button"
               onClick={() => setViewMode('charts')}
@@ -572,7 +572,7 @@ export const ReportTable: React.FC<ReportTableProps> = ({
               }`}
             >
               <BarChart3 className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 text-emerald-500" />
-              <span>Gráficos (Rosca / Barras)</span>
+              <span>Gráficos (Barras / Rosca)</span>
             </button>
           </div>
 
@@ -639,6 +639,7 @@ export const ReportTable: React.FC<ReportTableProps> = ({
       {viewMode === 'charts' && (
         <ReportChartsView
           items={items}
+          filteredItems={filteredItems}
           selectedYearMonth={selectedYearMonth}
           selectedTipo={selectedTipo}
           selectedProduto={selectedProduto}
@@ -646,6 +647,7 @@ export const ReportTable: React.FC<ReportTableProps> = ({
           searchQuery={searchQuery}
           matrixData={matrixData}
           globalTotalValor={metrics.totalValor}
+          onSelectTipo={setSelectedTipo}
         />
       )}
     </div>
